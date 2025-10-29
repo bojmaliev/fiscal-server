@@ -40,8 +40,12 @@ function controlReport(){
     execute($command);
 }
 
+function win1251(string $content){
+    return mb_convert_encoding($content, 'Windows-1251', 'UTF-8');
+}
+
 function itemToData(array $item): string {
-    $name = $item['name'];
+    $name = win1251($item['name']);
     $vat = vat($item['vat'] ?? 'A');
     $price = $item['price'];
     $quantity = $item['quantity'] ?? 1;
