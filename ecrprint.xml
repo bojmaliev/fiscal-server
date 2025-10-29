@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<setup>
+	<port>COM1</port>
+	<speed>9600</speed>
+	<stopOnFail>false</stopOnFail>
+	<defaultInputFileName>ecrprint.in</defaultInputFileName>
+</setup>
