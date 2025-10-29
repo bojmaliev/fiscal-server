@@ -65,8 +65,8 @@ function input(){
 
 function fiscal(){
     $input = input();
-    $items = $input['items'];
-    $payments = $input['payments'];
+    $items = $input['items'] ?? [];
+    $payments = $input['payments'] ?? [];
 
     $footer = win1251($input['footer'] ?? '');
 
