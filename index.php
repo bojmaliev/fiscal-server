@@ -43,13 +43,12 @@ function win1251(string $content){
 
 function itemToData(array $item): string {
     $name = win1251($item['name']);
-    $description = win1251($item['description'] ?? '');
     $vat = vat($item['vat'] ?? 'A');
     $price = $item['price'];
     $quantity = $item['quantity'] ?? 1;
     $mkd = $item['mkd'] ?? false;
 
-    return $name.($description ? NL.$description : '').TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
+    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
 }
 
 function paymentToData(array $item): string {
@@ -68,7 +67,6 @@ function fiscal(){
     $items = $input['items'] ?? [];
     $payments = $input['payments'] ?? [];
 
-    $footer = win1251($input['footer'] ?? '');
 
     if(count($items) == 0 || count($payments) == 0){
         http_response_code(400);
@@ -78,7 +76,7 @@ function fiscal(){
         singleCommand('0', '1,0000,1'),
         ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
         ...array_map(fn(array $item)=>  singleCommand('5', paymentToData($item)), $payments),
-        singleCommand('8', $footer),
+        singleCommand('8'),
     ];
     execute(implode(NL, $commands));
     http_response_code(200);
