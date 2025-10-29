@@ -9,7 +9,7 @@ $q = $_GET['q'];
 
 return match($q){
     'control-report'=> controlReport(),
-    'fiscal'=> fiscal($_POST['items']),
+    'fiscal'=> fiscal($_POST['items'] ?? []),
     default=> error()
 };
 
@@ -25,23 +25,22 @@ function controlReport(){
     execute($command);
 }
 
-// function fiscal(array $items){
-//     $commands = [
-//         singleCommand(),
-//         singleCommand(),
-//         singleCommand(),
-//         singleCommand(),
-//         singleCommand(),
-//     ];
-//     execute(implode(PHP_EOL, $commands));
+function fiscal(array $items){
+    $commands = [
+        singleCommand('0', '1,0000,1'),
+        singleCommand('1', 'СМОКИ\tА5.00*1.000'),
+        singleCommand('5'),
+        singleCommand('8'),
+    ];
+    execute(implode(PHP_EOL, $commands));
 
-// }
+}
 $seq = 32;
-function singleCommand(string $command, string $data){
+function singleCommand(string $command, string $data = ''){
     global $seq;
     $current = $seq;
     $seq++;
-    return chr($current).$command.$data;
+    return chr((int)$current).$command.$data;
 }
 
 function execute(string $command){
