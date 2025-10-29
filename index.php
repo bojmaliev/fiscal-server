@@ -17,10 +17,11 @@ return match($q){
     default=> error()
 };
 
-$sequence = '';
-const TAB = chr(9);
-const NL = chr(10);
-const MKD_ITEM = chr(40);
+
+define('TAB', chr(9));
+define('NL', chr(10));
+define('MKD_ITEM', chr(40));
+
 function vat(string $vat){
     return match($vat){
         'A'=> chr(192), 
