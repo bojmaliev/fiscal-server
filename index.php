@@ -18,16 +18,17 @@ return match($q){
 };
 
 $sequence = '';
-$TAB = chr(9);
-$NL = chr(10);
-$MKD_ITEM = chr(40);
-
-$VAT = [
-    'A'=> chr(192), 
-    'B'=> chr(193), 
-    'V'=> chr(194), 
-    'G'=> chr(195)
-];
+const TAB = chr(9);
+const NL = chr(10);
+const MKD_ITEM = chr(40);
+function vat(string $vat){
+    return match($vat){
+        'A'=> chr(192), 
+        'B'=> chr(193), 
+        'V'=> chr(194), 
+        'G'=> chr(195)
+    };
+}
 
 function error(){
     http_response_code(400);
@@ -40,25 +41,23 @@ function controlReport(){
 }
 
 function itemToData(array $item): string {
-    global $VAT, $TAB, $MKD_ITEM;
     $name = $item['name'];
-    $vat = $VAT[$item['vat']];
+    $vat = vat($item['vat']);
     $price = $item['price'];
     $quantity = $item['quantity'];
     $mkd = $item['mkd'];
 
-    return $name.$TAB.($mkd ? $MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'000';
+    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'000';
 }
 
 function fiscal(array $items){
-    global $NL;
     $commands = [
         singleCommand('0', '1,0000,1'),
         ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
         singleCommand('5'),
         singleCommand('8'),
     ];
-    execute(implode($NL, $commands));
+    execute(implode(NL, $commands));
 
 }
 $seq = 32;
