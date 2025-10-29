@@ -25,7 +25,8 @@ function vat(string $vat){
         'A'=> chr(192), 
         'B'=> chr(193), 
         'V'=> chr(194), 
-        'G'=> chr(195)
+        'G'=> chr(195),
+        default=> throw 'Not valid vat'
     };
 }
 
@@ -41,7 +42,7 @@ function controlReport(){
 
 function itemToData(array $item): string {
     $name = $item['name'];
-    $vat = vat($item['vat']) ?? 'A';
+    $vat = vat($item['vat'] ?? 'A');
     $price = $item['price'];
     $quantity = $item['quantity'] ?? 1;
     $mkd = $item['mkd'] ?? false;
