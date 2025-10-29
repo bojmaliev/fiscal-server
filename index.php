@@ -10,13 +10,10 @@ if(!isset($_GET['q'])){
 
 $q = $_GET['q'];
 
-// Get JSON input
-$input = json_decode(file_get_contents('php://input'), true);
-
 
 return match($q){
     'control-report'=> controlReport(),
-    'fiscal'=> fiscal($input['items'] ?? []),
+    'fiscal'=> fiscal(),
     default=> error()
 };
 
@@ -54,7 +51,14 @@ function itemToData(array $item): string {
     return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
 }
 
-function fiscal(array $items){
+function input(){
+    return json_decode(file_get_contents('php://input'), true);
+}
+
+function fiscal(){
+    $input = input();
+    $items = $input['items'];
+
     if(count($items) == 0){
         http_response_code(400);
         return "Error";
