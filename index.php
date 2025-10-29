@@ -7,13 +7,26 @@ if(!isset($_GET['q'])){
 
 $q = $_GET['q'];
 
+// Get JSON input
+$input = json_decode(file_get_contents('php://input'), true);
+
+
 return match($q){
     'control-report'=> controlReport(),
-    'fiscal'=> fiscal($_POST['items'] ?? []),
+    'fiscal'=> fiscal($input['items'] ?? []),
     default=> error()
 };
 
 $sequence = '';
+const TAB = chr(9);
+const NL = chr(10);
+const MKD_ITEM = chr(40);
+const VAT = [
+    'A'=> chr(192), 
+    'B'=> chr(193), 
+    'V'=> chr(194), 
+    'G'=> chr(195)
+];
 
 function error(){
     http_response_code(400);
@@ -25,14 +38,24 @@ function controlReport(){
     execute($command);
 }
 
+function itemToData(array $item): string {
+    $name = $item['name'];
+    $vat = VAT[$item['vat']];
+    $price = $item['price'];
+    $quantity = $item['quantity'];
+    $mkd = $item['mkd'];
+
+    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'000';
+}
+
 function fiscal(array $items){
     $commands = [
         singleCommand('0', '1,0000,1'),
-        singleCommand('1', 'СМОКИ'.chr(9).'А5.00*1.000'),
+        ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
         singleCommand('5'),
         singleCommand('8'),
     ];
-    execute(implode(chr(10), $commands));
+    execute(implode(NL, $commands));
 
 }
 $seq = 32;
