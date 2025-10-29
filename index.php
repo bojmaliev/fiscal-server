@@ -1,4 +1,7 @@
 <?php 
+define('TAB', chr(9));
+define('NL', chr(10));
+define('MKD_ITEM', chr(40));
 
 
 if(!isset($_GET['q'])){
@@ -16,11 +19,6 @@ return match($q){
     'fiscal'=> fiscal($input['items'] ?? []),
     default=> error()
 };
-
-
-define('TAB', chr(9));
-define('NL', chr(10));
-define('MKD_ITEM', chr(40));
 
 function vat(string $vat){
     return match($vat){
