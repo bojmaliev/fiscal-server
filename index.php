@@ -51,6 +51,13 @@ function itemToData(array $item): string {
     return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
 }
 
+function paymentToData(array $item): string {
+    $cash = $item['cash'] ?? true;
+    $amount = $item['amount'];
+
+    return TAB.($cash ? 'P' : 'D').$amount.'.000';
+}
+
 function input(){
     return json_decode(file_get_contents('php://input'), true);
 }
@@ -58,15 +65,16 @@ function input(){
 function fiscal(){
     $input = input();
     $items = $input['items'];
+    $payments = $input['payments'];
 
-    if(count($items) == 0){
+    if(count($items) == 0 || count($payments) == 0){
         http_response_code(400);
         return "Error";
     }
     $commands = [
         singleCommand('0', '1,0000,1'),
         ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
-        singleCommand('5'),
+        ...array_map(fn(array $item)=>  singleCommand('5', paymentToData($item)), $payments),
         singleCommand('8'),
     ];
     execute(implode(NL, $commands));
