@@ -28,11 +28,11 @@ function controlReport(){
 function fiscal(array $items){
     $commands = [
         singleCommand('0', '1,0000,1'),
-        singleCommand('1', 'СМОКИ\tА5.00*1.000'),
+        singleCommand('1', 'СМОКИ'.chr(9).'А5.00*1.000'),
         singleCommand('5'),
         singleCommand('8'),
     ];
-    execute(implode(PHP_EOL, $commands));
+    execute(implode(chr(10), $commands));
 
 }
 $seq = 32;
