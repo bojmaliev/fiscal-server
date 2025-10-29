@@ -41,15 +41,19 @@ function controlReport(){
 
 function itemToData(array $item): string {
     $name = $item['name'];
-    $vat = vat($item['vat']);
+    $vat = vat($item['vat']) ?? 'A';
     $price = $item['price'];
-    $quantity = $item['quantity'];
-    $mkd = $item['mkd'];
+    $quantity = $item['quantity'] ?? 1;
+    $mkd = $item['mkd'] ?? false;
 
-    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'000';
+    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
 }
 
 function fiscal(array $items){
+    if(count($items) == 0){
+        http_response_code(400);
+        return "Error";
+    }
     $commands = [
         singleCommand('0', '1,0000,1'),
         ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
@@ -57,7 +61,8 @@ function fiscal(array $items){
         singleCommand('8'),
     ];
     execute(implode(NL, $commands));
-
+    http_response_code(200);
+    return "";
 }
 $seq = 32;
 function singleCommand(string $command, string $data = ''){
