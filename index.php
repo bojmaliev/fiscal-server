@@ -21,7 +21,7 @@ $sequence = '';
 const TAB = chr(9);
 const NL = chr(10);
 const MKD_ITEM = chr(40);
-const VAT = [
+$VAT = [
     'A'=> chr(192), 
     'B'=> chr(193), 
     'V'=> chr(194), 
@@ -39,8 +39,9 @@ function controlReport(){
 }
 
 function itemToData(array $item): string {
+    global $VAT;
     $name = $item['name'];
-    $vat = VAT[$item['vat']];
+    $vat = $VAT[$item['vat']];
     $price = $item['price'];
     $quantity = $item['quantity'];
     $mkd = $item['mkd'];
