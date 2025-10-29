@@ -73,8 +73,7 @@ function singleCommand(string $command, string $data = ''){
     return chr((int)$current).$command.$data;
 }
 
-function execute(string $command){
-    $content = mb_convert_encoding($command, 'Windows-1251', 'UTF-8');
+function execute(string $content){
     file_put_contents(__DIR__ . DIRECTORY_SEPARATOR.'ecrprint.in', $content, LOCK_EX);
     // Build full path to your executable
     $exePath =__DIR__ . DIRECTORY_SEPARATOR . 'ecrprint.exe';
