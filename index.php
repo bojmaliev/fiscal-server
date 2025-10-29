@@ -9,8 +9,11 @@ $q = $_GET['q'];
 
 return match($q){
     'control-report'=> controlReport(),
+    'fiscal'=> fiscal($_POST['items']),
     default=> error()
 };
+
+$sequence = '';
 
 function error(){
     http_response_code(400);
@@ -18,16 +21,27 @@ function error(){
 }
 
 function controlReport(){
-    $command = singleCommand('2', 'E', '2');
+    $command = singleCommand('E', '2');
     execute($command);
 }
 
+// function fiscal(array $items){
+//     $commands = [
+//         singleCommand(),
+//         singleCommand(),
+//         singleCommand(),
+//         singleCommand(),
+//         singleCommand(),
+//     ];
+//     execute(implode(PHP_EOL, $commands));
 
-    // $content = "2E2";
-// sendCmd($content);
-
-function singleCommand(string $sequence, string $command, string $data){
-    return $sequence.$command.$data;
+// }
+$seq = 32;
+function singleCommand(string $command, string $data){
+    global $seq;
+    $current = $seq;
+    $seq++;
+    return chr($current).$command.$data;
 }
 
 function execute(string $command){
