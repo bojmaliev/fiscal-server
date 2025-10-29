@@ -27,7 +27,7 @@ function controlReport(){
 // sendCmd($content);
 
 function singleCommand(string $sequence, string $command, string $data){
-    return $sequence.$command.$data.'\n';
+    return $sequence.$command.$data;
 }
 
 function execute(string $command){
