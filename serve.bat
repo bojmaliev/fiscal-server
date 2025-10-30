@@ -1,3 +1,2 @@
 @echo off
-php -S 0.0.0.0:8000
-pause
+powershell -WindowStyle Hidden -Command "Start-Process php -ArgumentList '-S 0.0.0.0:8000' -WindowStyle Hidden"
