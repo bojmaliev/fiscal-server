@@ -12,6 +12,7 @@ $q = $_GET['q'];
 
 
 return match($q){
+    'close-day-report'=> closeDayReport(),
     'control-report'=> controlReport(),
     'fiscal'=> fiscal(),
     default=> error()
@@ -30,6 +31,11 @@ function vat(string $vat){
 function error(){
     http_response_code(400);
     return "";
+}
+
+function closeDayReport() {
+    $command = singleCommand('E');
+    execute($command);
 }
 
 function controlReport(){
@@ -82,11 +88,26 @@ function fiscal(){
     http_response_code(200);
     return "";
 }
-$seq = 32;
-function singleCommand(string $command, string $data = ''){
-    global $seq;
-    $current = $seq;
+function getNextSeq(): int {
+    $seqFile = __DIR__ . '/seq.txt';
+    $seq = 32; // default start
+
+    if (file_exists($seqFile)) {
+        $seq = (int) file_get_contents($seqFile);
+    }
+
     $seq++;
+    if ($seq > 255) {
+        $seq = 32; // wrap around
+    }
+
+    file_put_contents($seqFile, $seq, LOCK_EX);
+
+    return $seq;
+}
+
+function singleCommand(string $command, string $data = ''){
+    $current = getNextSeq();
     return chr((int)$current).$command.$data;
 }
 
