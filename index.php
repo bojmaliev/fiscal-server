@@ -46,12 +46,14 @@ function controlReport(){
 }
 
 function depositMoney(){
+    $input = input();
     $amount = $input['amount'] ?? 0;
     $command = singleCommand('F', $amount.".00");
     execute($command);
 }
 
 function withdrawMoney(){
+    $input = input();
     $amount = $input['amount'] ?? 0;
     $command = singleCommand('F', "-".$amount.".00");
     execute($command);
