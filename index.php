@@ -69,9 +69,9 @@ function periodShortReport() {
        throw new Exception('Error. Not valid date');
     }
 
-    // Build dmY format
-    $from = $fromParts[2] . $fromParts[1] . $fromParts[0];
-    $to   = $toParts[2] . $toParts[1] . $toParts[0];
+    // Build dmY format with last 2 digits of year
+    $from = $fromParts[2] . $fromParts[1] . substr($fromParts[0], -2);
+    $to   = $toParts[2] . $toParts[1] . substr($toParts[0], -2);
 
     $command = singleCommand('O', $from . ',' . $to);
     execute($command);
