@@ -15,6 +15,7 @@ return match($q){
     'close-day-report'=> closeDayReport(),
     'control-report'=> controlReport(),
     'deposit-withdraw-money'=> depositWithdrawMoney(),
+    'period-short-report'=> periodShortReport(),
     'fiscal'=> fiscal(),
     default=> error()
 };
@@ -48,6 +49,31 @@ function depositWithdrawMoney(){
     $input = input();
     $amount = $input['amount'] ?? 0;
     $command = singleCommand('F', $amount.".00");
+    execute($command);
+}
+
+
+function periodShortReport() {
+    $input = input();
+
+    // Split the dates into parts
+    $fromParts = explode('-', $input['from'] ?? '');
+    $toParts   = explode('-', $input['to'] ?? '');
+
+    // Validate format and actual date
+    if (
+        count($fromParts) !== 3 || count($toParts) !== 3 ||
+        !checkdate($fromParts[1], $fromParts[2], $fromParts[0]) ||
+        !checkdate($toParts[1], $toParts[2], $toParts[0])
+    ) {
+       throw new Exception('Error. Not valid date');
+    }
+
+    // Build dmY format
+    $from = $fromParts[2] . $fromParts[1] . $fromParts[0];
+    $to   = $toParts[2] . $toParts[1] . $toParts[0];
+
+    $command = singleCommand('O', $from . ',' . $to);
     execute($command);
 }
 
