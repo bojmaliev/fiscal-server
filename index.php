@@ -14,6 +14,8 @@ $q = $_GET['q'];
 return match($q){
     'close-day-report'=> closeDayReport(),
     'control-report'=> controlReport(),
+    'deposit-money'=> depositMoney(),
+    'withdraw-money'=> withdrawMoney(),
     'fiscal'=> fiscal(),
     default=> error()
 };
@@ -40,6 +42,18 @@ function closeDayReport() {
 
 function controlReport(){
     $command = singleCommand('E', '2');
+    execute($command);
+}
+
+function depositMoney(){
+    $amount = $input['amount'] ?? 0;
+    $command = singleCommand('F', $amount.".00");
+    execute($command);
+}
+
+function withdrawMoney(){
+    $amount = $input['amount'] ?? 0;
+    $command = singleCommand('F', "-".$amount.".00");
     execute($command);
 }
 
