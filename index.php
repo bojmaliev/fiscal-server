@@ -14,7 +14,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 define('TAB', chr(9));
 define('NL', chr(10));
-define('MKD_ITEM', chr(40));
 
 
 if(!isset($_GET['q'])){
@@ -101,7 +100,7 @@ function itemToData(array $item): string {
     $quantity = $item['quantity'] ?? 1;
     $mkd = $item['mkd'] ?? false;
 
-    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
+    return $name.TAB.($mkd ? '@': '').$vat.$price.'.00*'.$quantity.'.000';
 }
 
 function paymentToData(array $item): string {
