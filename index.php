@@ -1,154 +1,115 @@
-<?php 
-define('TAB', chr(9));
-define('NL', chr(10));
-define('MKD_ITEM', chr(40));
+<?php
 
+require_once __DIR__ . '/PrinterDriver.php';
+require_once __DIR__ . '/FP700Driver.php';
+require_once __DIR__ . '/SY250Driver.php';
 
-if(!isset($_GET['q'])){
-    return error();
-}
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
 
-$q = $_GET['q'];
+const PRINTER_DRIVER = 'fp700'; // 'fp700' or 'sy250'
+const PRINTER_BASE_PATH = __DIR__;
 
+// ---------------------------------------------------------------------------
+// Driver factory
+// ---------------------------------------------------------------------------
 
-return match($q){
-    'close-day-report'=> closeDayReport(),
-    'control-report'=> controlReport(),
-    'deposit-withdraw-money'=> depositWithdrawMoney(),
-    'period-short-report'=> periodShortReport(),
-    'fiscal'=> fiscal(),
-    default=> error()
-};
-
-function vat(string $vat){
-    return match($vat){
-        'A'=> chr(192), 
-        'B'=> chr(193), 
-        'V'=> chr(194), 
-        'G'=> chr(195),
-        default=> throw 'Not valid vat'
+function createDriver(): PrinterDriver
+{
+    return match (PRINTER_DRIVER) {
+        'fp700' => new FP700Driver(PRINTER_BASE_PATH),
+        'sy250' => new SY250Driver(PRINTER_BASE_PATH),
+        default  => throw new \RuntimeException('Unknown printer driver: ' . PRINTER_DRIVER),
     };
 }
 
-function error(){
-    http_response_code(400);
-    return "";
-}
+// ---------------------------------------------------------------------------
+// Route handlers
+// ---------------------------------------------------------------------------
 
-function closeDayReport() {
-    $command = singleCommand('E');
-    execute($command);
-}
-
-function controlReport(){
-    $command = singleCommand('E', '2');
-    execute($command);
-}
-
-function depositWithdrawMoney(){
-    $input = input();
-    $amount = $input['amount'] ?? 0;
-    $command = singleCommand('F', $amount.".00");
-    execute($command);
-}
-
-
-function periodShortReport() {
-    $input = input();
-
-    // Split the dates into parts
-    $fromParts = explode('-', $input['from'] ?? '');
-    $toParts   = explode('-', $input['to'] ?? '');
-
-    // Validate format and actual date
-    if (
-        count($fromParts) !== 3 || count($toParts) !== 3 ||
-        !checkdate($fromParts[1], $fromParts[2], $fromParts[0]) ||
-        !checkdate($toParts[1], $toParts[2], $toParts[0])
-    ) {
-       throw new Exception('Error. Not valid date');
-    }
-
-    // Build dmY format with last 2 digits of year
-    $from = $fromParts[2] . $fromParts[1] . substr($fromParts[0], -2);
-    $to   = $toParts[2] . $toParts[1] . substr($toParts[0], -2);
-
-    $command = singleCommand('O', $from . ',' . $to);
-    execute($command);
-}
-
-function win1251(string $content){
-    return mb_convert_encoding($content, 'Windows-1251', 'UTF-8');
-}
-
-function itemToData(array $item): string {
-    $name = win1251($item['name']);
-    $vat = vat($item['vat'] ?? 'A');
-    $price = $item['price'];
-    $quantity = $item['quantity'] ?? 1;
-    $mkd = $item['mkd'] ?? false;
-
-    return $name.TAB.($mkd ? MKD_ITEM : '').$vat.$price.'.00*'.$quantity.'.000';
-}
-
-function paymentToData(array $item): string {
-    $cash = $item['cash'] ?? true;
-    $amount = $item['amount'];
-
-    return TAB.($cash ? 'P' : 'D').$amount.'.000';
-}
-
-function input(){
-    return json_decode(file_get_contents('php://input'), true);
-}
-
-function fiscal(){
-    $input = input();
-    $items = $input['items'] ?? [];
+function handleFiscal(PrinterDriver $driver): void
+{
+    $input    = jsonInput();
+    $items    = $input['items']    ?? [];
     $payments = $input['payments'] ?? [];
 
-
-    if(count($items) == 0 || count($payments) == 0){
-        http_response_code(400);
-        return "Error";
+    if (empty($items) || empty($payments)) {
+        throw new \InvalidArgumentException('items and payments are required');
     }
-    $commands = [
-        singleCommand('0', '1,0000,1'),
-        ...array_map(fn(array $item)=>  singleCommand('1', itemToData($item)), $items),
-        ...array_map(fn(array $item)=>  singleCommand('5', paymentToData($item)), $payments),
-        singleCommand('8'),
-    ];
-    execute(implode(NL, $commands));
+
+    $driver->fiscal($items, $payments);
+}
+
+function handleDepositWithdrawMoney(PrinterDriver $driver): void
+{
+    $input  = jsonInput();
+    $amount = (float) ($input['amount'] ?? 0);
+    $driver->depositWithdrawMoney($amount);
+}
+
+function handlePeriodShortReport(PrinterDriver $driver): void
+{
+    $input = jsonInput();
+    [$from, $to] = parseDates($input);
+    $driver->periodShortReport($from, $to);
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+function jsonInput(): array
+{
+    return json_decode(file_get_contents('php://input'), true) ?? [];
+}
+
+/**
+ * Validates and returns [from, to] dates from the input array.
+ * Expects YYYY-MM-DD format.
+ *
+ * @throws \InvalidArgumentException on invalid dates.
+ */
+function parseDates(array $input): array
+{
+    $fromParts = explode('-', $input['from'] ?? '');
+    $toParts   = explode('-', $input['to']   ?? '');
+
+    if (
+        count($fromParts) !== 3 || count($toParts) !== 3 ||
+        !checkdate((int) $fromParts[1], (int) $fromParts[2], (int) $fromParts[0]) ||
+        !checkdate((int) $toParts[1],   (int) $toParts[2],   (int) $toParts[0])
+    ) {
+        throw new \InvalidArgumentException('Invalid date. Expected YYYY-MM-DD format.');
+    }
+
+    return [$input['from'], $input['to']];
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+try {
+    if (!isset($_GET['q'])) {
+        throw new \InvalidArgumentException('Missing route parameter');
+    }
+
+    $driver = createDriver();
+
+    match ($_GET['q']) {
+        'close-day-report'       => $driver->closeDayReport(),
+        'control-report'         => $driver->controlReport(),
+        'deposit-withdraw-money' => handleDepositWithdrawMoney($driver),
+        'period-short-report'    => handlePeriodShortReport($driver),
+        'fiscal'                 => handleFiscal($driver),
+        default                  => throw new \InvalidArgumentException("Unknown route: {$_GET['q']}"),
+    };
+
     http_response_code(200);
-    return "";
-}
-function getNextSeq(): int {
-    $seqFile = __DIR__ . '/seq.txt';
-    $seq = 32; // default start
 
-    if (file_exists($seqFile)) {
-        $seq = (int) file_get_contents($seqFile);
-    }
-
-    $seq++;
-    if ($seq > 255) {
-        $seq = 32; // wrap around
-    }
-
-    file_put_contents($seqFile, $seq, LOCK_EX);
-
-    return $seq;
-}
-
-function singleCommand(string $command, string $data = ''){
-    $current = getNextSeq();
-    return chr((int)$current).$command.$data;
-}
-
-function execute(string $content){
-    file_put_contents(__DIR__ . DIRECTORY_SEPARATOR.'ecrprint.in', $content, LOCK_EX);
-    // Build full path to your executable
-    $exePath =__DIR__ . DIRECTORY_SEPARATOR . 'ecrprint.exe';
-    // Run the executable
-    exec($exePath, $output, $returnCode);
+} catch (\InvalidArgumentException $e) {
+    http_response_code(400);
+} catch (\Throwable $e) {
+    http_response_code(500);
 }

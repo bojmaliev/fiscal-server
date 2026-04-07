@@ -1,0 +1,10 @@
+'0' - cash;
+'1' - card;
+'2' - credit
+
+Vo komandata:
+&50	30.00	
+kade sto:
+& - sekvencen kod na komandata
+5 - kod na komandata
+0 - tip na plakanje (vo primerov cash)
