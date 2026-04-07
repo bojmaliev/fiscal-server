@@ -16,6 +16,7 @@ define('TAB', chr(9));
 define('NL', chr(10));
 
 require_once __DIR__ . '/PrinterDriver.php';
+require_once __DIR__ . '/EcrPrintDriver.php';
 require_once __DIR__ . '/FP700Driver.php';
 require_once __DIR__ . '/SY250Driver.php';
 
