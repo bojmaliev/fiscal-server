@@ -19,6 +19,8 @@ require_once __DIR__ . '/PrinterDriver.php';
 require_once __DIR__ . '/EcrPrintDriver.php';
 require_once __DIR__ . '/FP700Driver.php';
 require_once __DIR__ . '/SY250Driver.php';
+require_once __DIR__ . '/SeverecDriver.php';
+require_once __DIR__ . '/RazvigorecDriver.php';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -34,8 +36,10 @@ const PRINTER_BASE_PATH = __DIR__;
 function createDriver(): PrinterDriver
 {
     return match (PRINTER_DRIVER) {
-        'fp700' => new FP700Driver(PRINTER_BASE_PATH),
-        'sy250' => new SY250Driver(PRINTER_BASE_PATH),
+        'fp700'   => new FP700Driver(PRINTER_BASE_PATH),
+        'sy250'   => new SY250Driver(PRINTER_BASE_PATH),
+        'severec'    => new SeverecDriver(PRINTER_BASE_PATH),
+        'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH),
         default  => throw new \RuntimeException('Unknown printer driver: ' . PRINTER_DRIVER),
     };
 }

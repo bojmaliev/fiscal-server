@@ -1,0 +1,16 @@
+#F - Fiskalna smetka
+#S - Storno smetka
+#Z - DFI
+#X - X report
+#P - Periodicen report
+
+@Artikal
+
+
+Placanje:
+
+#G1000 - Vo gotovo 1.000,00 denari
+ili
+#K1000 - So karticka 1.000,00 denari
+ili
+#M3000;2000 - Vo gotovo 3.000,00 i so karticka 2.000,00 denari 
