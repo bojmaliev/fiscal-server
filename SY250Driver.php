@@ -47,7 +47,7 @@ class SY250Driver extends EcrPrintDriver
             $this->cmd('8'),
         ];
 
-        $this->execute(implode(self::CRLF, $commands));
+        $this->execute(implode(self::CRLF, $commands) . self::CRLF);
     }
 
     public function closeDayReport(): void
