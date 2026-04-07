@@ -28,7 +28,7 @@ class SY250Driver extends EcrPrintDriver
     {
         $this->initPaths($basePath);
         $this->opCode = '1';
-        $this->opPwd  = '0000';
+        $this->opPwd  = '1';
     }
 
     public function fiscal(array $items, array $payments): void
