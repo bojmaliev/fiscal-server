@@ -15,12 +15,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 define('TAB', chr(9));
 define('NL', chr(10));
 
-require_once __DIR__ . '/PrinterDriver.php';
-require_once __DIR__ . '/EcrPrintDriver.php';
-require_once __DIR__ . '/FP700Driver.php';
-require_once __DIR__ . '/SY250Driver.php';
-require_once __DIR__ . '/SeverecDriver.php';
-require_once __DIR__ . '/RazvigorecDriver.php';
+require_once __DIR__ . '/drivers/PrinterDriver.php';
+require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
+require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
+require_once __DIR__ . '/drivers/Accent/SY250Driver.php';
+require_once __DIR__ . '/drivers/Duna/SeverecDriver.php';
+require_once __DIR__ . '/drivers/Duna/RazvigorecDriver.php';
 
 // ---------------------------------------------------------------------------
 // Configuration

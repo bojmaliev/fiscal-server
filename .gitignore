@@ -2,4 +2,8 @@ ecrprint.err
 ecrprint.in
 ecrprint.out
 ecrprint.rs
+bin/accent/seq.txt
+bin/severec/severec.in
+bin/severec/severec_seq.txt
 .DS_Store
+bin/razvigorec/Razvigorec.txt

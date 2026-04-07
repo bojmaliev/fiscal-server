@@ -20,9 +20,10 @@ abstract class EcrPrintDriver implements PrinterDriver
 
     protected function initPaths(string $basePath): void
     {
-        $this->seqFile   = $basePath . DIRECTORY_SEPARATOR . 'seq.txt';
-        $this->inputFile = $basePath . DIRECTORY_SEPARATOR . 'ecrprint.in';
-        $this->execPath  = $basePath . DIRECTORY_SEPARATOR . 'ecrprint.exe';
+        $accentDir       = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'accent';
+        $this->seqFile   = $accentDir . DIRECTORY_SEPARATOR . 'seq.txt';
+        $this->inputFile = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.in';
+        $this->execPath  = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.exe';
     }
 
     protected function execute(string $content): void

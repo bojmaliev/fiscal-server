@@ -27,8 +27,8 @@ class RazvigorecDriver implements PrinterDriver
 
     public function __construct(string $basePath)
     {
-        $this->inputFile = $basePath . DIRECTORY_SEPARATOR . 'RAZVIGOREC' . DIRECTORY_SEPARATOR . 'Razvigorec.txt';
-        $this->execPath  = $basePath . DIRECTORY_SEPARATOR . 'RAZVIGOREC' . DIRECTORY_SEPARATOR . 'Razvigorec.exe';
+        $this->inputFile = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'razvigorec' . DIRECTORY_SEPARATOR . 'Razvigorec.txt';
+        $this->execPath  = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'razvigorec' . DIRECTORY_SEPARATOR . 'Razvigorec.exe';
     }
 
     public function fiscal(array $items, array $payments): void

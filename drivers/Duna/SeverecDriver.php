@@ -29,9 +29,10 @@ class SeverecDriver extends EcrPrintDriver
 
     public function __construct(string $basePath)
     {
-        $this->seqFile   = $basePath . DIRECTORY_SEPARATOR . 'severec_seq.txt';
-        $this->inputFile = $basePath . DIRECTORY_SEPARATOR . 'severec.in';
-        $this->execPath  = $basePath . DIRECTORY_SEPARATOR . 'SEVEREC' . DIRECTORY_SEPARATOR . 'Severec.exe';
+        $severecDir      = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'severec';
+        $this->seqFile   = $severecDir . DIRECTORY_SEPARATOR . 'severec_seq.txt';
+        $this->inputFile = $severecDir . DIRECTORY_SEPARATOR . 'severec.in';
+        $this->execPath  = $severecDir . DIRECTORY_SEPARATOR . 'Severec.exe';
         $this->opCode = '1';
         $this->opPwd  = '0001';
     }
