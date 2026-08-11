@@ -138,8 +138,10 @@ class RazvigorecDriver implements PrinterDriver
     }
 
     /**
-     * Runs via runProcess() so the working directory is bin/razvigorec —
-     * Razvigorec.exe reads Razvigorec.ini from there.
+     * Runs via runProcess() for the argument escaping and exit-code check.
+     * Razvigorec.exe locates Razvigorec.ini and Result.out next to itself
+     * (AppDomain.BaseDirectory), so unlike ecrprint.exe it does not depend on
+     * the working directory.
      */
     private function execute(string $content): void
     {

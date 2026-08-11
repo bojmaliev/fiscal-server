@@ -3,13 +3,18 @@
 /**
  * Shared launcher for the vendor fiscal-printer executables.
  *
- * Every one of these exes resolves its auxiliary files — config (ecrprint.xml,
- * FISKAL.INI, Razvigorec.ini), input, output, error and result files — relative
- * to the *working directory*, not to its own location. ecrprint.exe in
- * particular contains no Assembly.Location / CodeBase / BaseDirectory call at
- * all: it can only build paths from Directory.GetCurrentDirectory(). So each
- * exe must be started with its own folder as the working directory, otherwise
- * it silently finds nothing and prints nothing.
+ * Provides the two things a bare exec() did not:
+ *
+ *  1. A working directory. ecrprint.exe builds every path it uses from
+ *     Directory.GetCurrentDirectory() — it contains no Assembly.Location,
+ *     CodeBase or AppDomain.BaseDirectory call at all — so it only finds
+ *     ecrprint.xml and ecrprint.in when started inside bin/accent.
+ *     (Severec.exe and Razvigorec.exe use AppDomain.BaseDirectory instead and
+ *     are therefore indifferent to the working directory; starting them in
+ *     their own folder anyway costs nothing and keeps the files they write out
+ *     of the project root.)
+ *  2. Escaped arguments and a checked exit code, so a print that fails stops
+ *     being reported to the caller as success.
  */
 trait ProcessRunner
 {
