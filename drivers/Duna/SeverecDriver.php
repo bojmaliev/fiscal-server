@@ -145,10 +145,13 @@ class SeverecDriver extends EcrPrintDriver
     /**
      * Overrides EcrPrintDriver::execute() because Severec.exe requires the
      * input filename as a command-line argument, unlike ecrprint.exe.
+     *
+     * Still runs via runProcess() so the working directory is bin/severec —
+     * Severec.exe reads FISKAL.INI from there.
      */
     protected function execute(string $content): void
     {
         file_put_contents($this->inputFile, $content, LOCK_EX);
-        exec(escapeshellcmd($this->execPath) . ' ' . escapeshellarg($this->inputFile));
+        $this->runProcess($this->execPath, [$this->inputFile]);
     }
 }

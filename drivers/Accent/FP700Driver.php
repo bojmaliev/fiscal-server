@@ -2,8 +2,8 @@
 
 class FP700Driver extends EcrPrintDriver
 {
-    private const NL  = "\n";
-    private const TAB = "\t";
+    private const CRLF = "\r\n";
+    private const TAB  = "\t";
 
     // chr(64) = '@' — marks a Macedonian product in the FP700 binary protocol
     private const MKD_ITEM = '@';
@@ -22,7 +22,10 @@ class FP700Driver extends EcrPrintDriver
             $this->cmd('8'),
         ];
 
-        $this->execute(implode(self::NL, $commands));
+        // Every command is CRLF-terminated and the batch ends with a blank line,
+        // matching the vendor reference files in docs/accent/fp700 byte for byte
+        // (e.g. "…%8\r\n\r\n"). Single-command operations carry no terminator.
+        $this->execute(implode(self::CRLF, $commands) . self::CRLF . self::CRLF);
     }
 
     public function closeDayReport(): void
@@ -64,8 +67,10 @@ class FP700Driver extends EcrPrintDriver
 
     private function paymentData(array $payment): string
     {
+        // Money uses 2 decimals (vendor reference: "\tD15.00", "\tP5.00");
+        // 3 decimals are only for item quantities.
         $mode   = ($payment['cash'] ?? true) ? 'P' : 'D';
-        $amount = number_format((float)$payment['amount'], 3, '.', '');
+        $amount = number_format((float)$payment['amount'], 2, '.', '');
 
         return self::TAB . $mode . $amount;
     }

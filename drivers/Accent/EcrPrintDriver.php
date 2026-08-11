@@ -11,6 +11,8 @@
  */
 abstract class EcrPrintDriver implements PrinterDriver
 {
+    use ProcessRunner;
+
     protected const SEQ_MIN = 32;
     protected const SEQ_MAX = 255;
 
@@ -26,10 +28,16 @@ abstract class EcrPrintDriver implements PrinterDriver
         $this->execPath  = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.exe';
     }
 
+    /**
+     * ecrprint.exe takes no arguments — it reads the file named by
+     * <defaultInputFileName> in ecrprint.xml, and looks up both of those
+     * relative to its working directory. runProcess() supplies bin/accent as
+     * that working directory, which is where initPaths() writes ecrprint.in.
+     */
     protected function execute(string $content): void
     {
         file_put_contents($this->inputFile, $content, LOCK_EX);
-        exec($this->execPath);
+        $this->runProcess($this->execPath);
     }
 
     protected function nextSeq(): int

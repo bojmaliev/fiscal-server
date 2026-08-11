@@ -22,6 +22,8 @@
  */
 class RazvigorecDriver implements PrinterDriver
 {
+    use ProcessRunner;
+
     private string $inputFile;
     private string $execPath;
 
@@ -135,9 +137,13 @@ class RazvigorecDriver implements PrinterDriver
         return mb_convert_encoding($content, 'Windows-1251', 'UTF-8');
     }
 
+    /**
+     * Runs via runProcess() so the working directory is bin/razvigorec —
+     * Razvigorec.exe reads Razvigorec.ini from there.
+     */
     private function execute(string $content): void
     {
         file_put_contents($this->inputFile, $content, LOCK_EX);
-        exec(escapeshellcmd($this->execPath) . ' ' . escapeshellarg($this->inputFile));
+        $this->runProcess($this->execPath, [$this->inputFile]);
     }
 }

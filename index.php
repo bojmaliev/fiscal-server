@@ -16,6 +16,7 @@ define('TAB', chr(9));
 define('NL', chr(10));
 
 require_once __DIR__ . '/drivers/PrinterDriver.php';
+require_once __DIR__ . '/drivers/ProcessRunner.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
 require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
 require_once __DIR__ . '/drivers/Accent/SY250Driver.php';
