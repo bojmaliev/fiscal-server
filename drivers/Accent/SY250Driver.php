@@ -24,9 +24,10 @@ class SY250Driver extends EcrPrintDriver
     private string $opCode;
     private string $opPwd;
 
-    public function __construct(string $basePath)
+    public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
         $this->initPaths($basePath);
+        $this->applySerialSettings($port, $speed);
         $this->opCode = '1';
         $this->opPwd  = '1';
     }

@@ -7,3 +7,10 @@ bin/severec/severec.in
 bin/severec/severec_seq.txt
 .DS_Store
 bin/razvigorec/Razvigorec.txt
+
+# Runtime output from the Duna executables. Listed by path so the vendor
+# samples in docs/*/Result.out stay tracked.
+bin/severec/Result.out
+bin/razvigorec/Result.out
+bin/severec/Log/
+bin/razvigorec/Log/

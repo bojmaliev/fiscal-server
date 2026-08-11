@@ -8,9 +8,10 @@ class FP700Driver extends EcrPrintDriver
     // chr(64) = '@' — marks a Macedonian product in the FP700 binary protocol
     private const MKD_ITEM = '@';
 
-    public function __construct(string $basePath)
+    public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
         $this->initPaths($basePath);
+        $this->applySerialSettings($port, $speed);
     }
 
     public function fiscal(array $items, array $payments): void

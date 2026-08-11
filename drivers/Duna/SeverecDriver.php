@@ -22,19 +22,66 @@
  */
 class SeverecDriver extends EcrPrintDriver
 {
+    use DunaResult;
+
     private const CRLF = "\r\n";
 
     private string $opCode;
     private string $opPwd;
 
-    public function __construct(string $basePath)
+    public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
-        $severecDir      = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'severec';
-        $this->seqFile   = $severecDir . DIRECTORY_SEPARATOR . 'severec_seq.txt';
-        $this->inputFile = $severecDir . DIRECTORY_SEPARATOR . 'severec.in';
-        $this->execPath  = $severecDir . DIRECTORY_SEPARATOR . 'Severec.exe';
+        $severecDir       = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'severec';
+        $this->seqFile    = $severecDir . DIRECTORY_SEPARATOR . 'severec_seq.txt';
+        $this->inputFile  = $severecDir . DIRECTORY_SEPARATOR . 'severec.in';
+        $this->execPath   = $severecDir . DIRECTORY_SEPARATOR . 'Severec.exe';
+        $this->configFile = $severecDir . DIRECTORY_SEPARATOR . 'FISKAL.INI';
+        $this->initResultPaths($severecDir);
+        $this->applySerialSettings($port, $speed);
         $this->opCode = '1';
         $this->opPwd  = '0001';
+    }
+
+    /**
+     * Overrides the ecrprint.xml writer — Severec.exe is configured through an
+     * INI file instead. Rewrites only the Port= / Speed= values and leaves
+     * every other key and any comments untouched.
+     *
+     * @param string|null $speed Severec's SPEED is a vendor *code*, not a baud
+     *                           rate (the shipped file uses 5), unlike the
+     *                           literal baud ecrprint.xml expects.
+     */
+    protected function applySerialSettings(?string $port, ?string $speed): void
+    {
+        if ($port === null && $speed === null) {
+            return;
+        }
+
+        $original = @file_get_contents($this->configFile);
+
+        if ($original === false) {
+            throw new \RuntimeException('Cannot read ' . $this->configFile);
+        }
+
+        $updated = $original;
+
+        foreach (['Port' => $port, 'Speed' => $speed] as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            $pattern = '/^(' . $key . '\s*=\s*).*$/mi';
+
+            if (!preg_match($pattern, $updated)) {
+                throw new \RuntimeException("{$key}= missing from " . $this->configFile);
+            }
+
+            $updated = preg_replace($pattern, '${1}' . $value, $updated, 1);
+        }
+
+        if ($updated !== $original && file_put_contents($this->configFile, $updated, LOCK_EX) === false) {
+            throw new \RuntimeException('Cannot write ' . $this->configFile);
+        }
     }
 
     public function fiscal(array $items, array $payments): void
@@ -153,7 +200,12 @@ class SeverecDriver extends EcrPrintDriver
      */
     protected function execute(string $content): void
     {
+        $this->clearFiles($this->resultFile);
+        $logBefore = $this->snapshotFiles($this->errorLogDir);
+
         file_put_contents($this->inputFile, $content, LOCK_EX);
+
         $this->runProcess($this->execPath, [$this->inputFile]);
+        $this->assertResultOk($logBefore);
     }
 }

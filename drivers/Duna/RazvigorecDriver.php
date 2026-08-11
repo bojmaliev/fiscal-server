@@ -23,14 +23,57 @@
 class RazvigorecDriver implements PrinterDriver
 {
     use ProcessRunner;
+    use DunaResult;
 
     private string $inputFile;
     private string $execPath;
+    private string $configFile;
 
-    public function __construct(string $basePath)
+    public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
-        $this->inputFile = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'razvigorec' . DIRECTORY_SEPARATOR . 'Razvigorec.txt';
-        $this->execPath  = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'razvigorec' . DIRECTORY_SEPARATOR . 'Razvigorec.exe';
+        $razvigorecDir    = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'razvigorec';
+        $this->inputFile  = $razvigorecDir . DIRECTORY_SEPARATOR . 'Razvigorec.txt';
+        $this->execPath   = $razvigorecDir . DIRECTORY_SEPARATOR . 'Razvigorec.exe';
+        $this->configFile = $razvigorecDir . DIRECTORY_SEPARATOR . 'Razvigorec.ini';
+        $this->initResultPaths($razvigorecDir);
+        $this->applySerialSettings($port, $speed);
+    }
+
+    /**
+     * Points Razvigorec.ini at a COM port chosen by the caller.
+     *
+     * Razvigorec.ini is not a keyed INI: the port is simply the first line
+     * ("COM1" as shipped). Any further lines are preserved. Razvigorec.exe
+     * exposes no baud-rate setting, so a speed is rejected rather than
+     * silently dropped.
+     */
+    private function applySerialSettings(?string $port, ?string $speed): void
+    {
+        if ($speed !== null) {
+            throw new \InvalidArgumentException('The Razvigorec driver has no speed setting; omit "speed".');
+        }
+
+        if ($port === null) {
+            return;
+        }
+
+        $original = @file_get_contents($this->configFile);
+
+        if ($original === false) {
+            throw new \RuntimeException('Cannot read ' . $this->configFile);
+        }
+
+        $lines = preg_split('/\r\n|\n|\r/', rtrim($original, "\r\n"));
+
+        if (($lines[0] ?? null) === $port) {
+            return;
+        }
+
+        $lines[0] = $port;
+
+        if (file_put_contents($this->configFile, implode("\r\n", $lines) . "\r\n", LOCK_EX) === false) {
+            throw new \RuntimeException('Cannot write ' . $this->configFile);
+        }
     }
 
     public function fiscal(array $items, array $payments): void
@@ -145,7 +188,12 @@ class RazvigorecDriver implements PrinterDriver
      */
     private function execute(string $content): void
     {
+        $this->clearFiles($this->resultFile);
+        $logBefore = $this->snapshotFiles($this->errorLogDir);
+
         file_put_contents($this->inputFile, $content, LOCK_EX);
+
         $this->runProcess($this->execPath, [$this->inputFile]);
+        $this->assertResultOk($logBefore);
     }
 }

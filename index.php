@@ -20,6 +20,7 @@ require_once __DIR__ . '/drivers/ProcessRunner.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
 require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
 require_once __DIR__ . '/drivers/Accent/SY250Driver.php';
+require_once __DIR__ . '/drivers/Duna/DunaResult.php';
 require_once __DIR__ . '/drivers/Duna/SeverecDriver.php';
 require_once __DIR__ . '/drivers/Duna/RazvigorecDriver.php';
 
@@ -27,21 +28,54 @@ require_once __DIR__ . '/drivers/Duna/RazvigorecDriver.php';
 // Configuration
 // ---------------------------------------------------------------------------
 
-const PRINTER_DRIVER = 'fp700'; // 'fp700' or 'sy250'
+// Fallbacks used when a request does not say otherwise. PRINTER_PORT and
+// PRINTER_SPEED = null mean "leave the vendor config files exactly as they are",
+// so an installation configured by hand keeps working untouched.
+const PRINTER_DRIVER = 'fp700'; // 'fp700', 'sy250', 'severec' or 'razvigorec'
+const PRINTER_PORT   = null;    // e.g. 'COM4'
+const PRINTER_SPEED  = null;    // ecrprint: literal baud ('9600'). Severec: vendor code ('5').
 const PRINTER_BASE_PATH = __DIR__;
 
 // ---------------------------------------------------------------------------
 // Driver factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds the driver for this request.
+ *
+ * The printer and serial port are selectable per request, so the calling
+ * application can drive any till without anything being configured on the
+ * machine itself:
+ *
+ *   ?q=fiscal&driver=severec&port=COM4
+ *
+ * All three keys — driver, port, speed — are optional and may be sent either
+ * as query parameters or as fields in the JSON body, the query string winning
+ * when both are present. Anything omitted falls back to the constants above.
+ */
 function createDriver(): PrinterDriver
 {
-    return match (PRINTER_DRIVER) {
-        'fp700'   => new FP700Driver(PRINTER_BASE_PATH),
-        'sy250'   => new SY250Driver(PRINTER_BASE_PATH),
-        'severec'    => new SeverecDriver(PRINTER_BASE_PATH),
-        'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH),
-        default  => throw new \RuntimeException('Unknown printer driver: ' . PRINTER_DRIVER),
+    $driver = strtolower(requestSetting('driver') ?? PRINTER_DRIVER);
+    $port   = requestSetting('port')  ?? PRINTER_PORT;
+    $speed  = requestSetting('speed') ?? PRINTER_SPEED;
+
+    // The port is written into a vendor config file, so keep it to COM1–COM999.
+    if ($port !== null && !preg_match('/^COM\d{1,3}$/i', $port)) {
+        throw new \InvalidArgumentException('Invalid port. Expected COM1 to COM999.');
+    }
+
+    if ($speed !== null && !ctype_digit($speed)) {
+        throw new \InvalidArgumentException('Invalid speed. Expected digits only.');
+    }
+
+    $port = $port === null ? null : strtoupper($port);
+
+    return match ($driver) {
+        'fp700'      => new FP700Driver(PRINTER_BASE_PATH, $port, $speed),
+        'sy250'      => new SY250Driver(PRINTER_BASE_PATH, $port, $speed),
+        'severec'    => new SeverecDriver(PRINTER_BASE_PATH, $port, $speed),
+        'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH, $port, $speed),
+        default      => throw new \InvalidArgumentException('Unknown printer driver: ' . $driver),
     };
 }
 
@@ -82,7 +116,29 @@ function handlePeriodShortReport(PrinterDriver $driver): void
 
 function jsonInput(): array
 {
-    return json_decode(file_get_contents('php://input'), true) ?? [];
+    static $input = null;
+
+    if ($input === null) {
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    }
+
+    return $input;
+}
+
+/**
+ * Reads an optional per-request setting from the query string, falling back to
+ * the JSON body. Returns null when absent or blank, so callers can safely send
+ * an empty value to mean "use the default".
+ */
+function requestSetting(string $key): ?string
+{
+    $value = $_GET[$key] ?? jsonInput()[$key] ?? null;
+
+    if ($value === null || !is_scalar($value) || (string) $value === '') {
+        return null;
+    }
+
+    return (string) $value;
 }
 
 /**
@@ -130,7 +186,20 @@ try {
     http_response_code(200);
 
 } catch (\InvalidArgumentException $e) {
-    http_response_code(400);
+    respondError(400, $e->getMessage());
 } catch (\Throwable $e) {
-    http_response_code(500);
+    respondError(500, $e->getMessage());
+}
+
+/**
+ * Sends the failure reason to the caller instead of a bare status code — the
+ * vendor executables report what went wrong (wrong COM port, printer offline,
+ * rejected command) only in their output files, and that text is the whole
+ * value of reading them.
+ */
+function respondError(int $status, string $message): void
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['error' => $message], JSON_UNESCAPED_UNICODE);
 }

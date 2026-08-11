@@ -65,4 +65,87 @@ trait ProcessRunner
             ));
         }
     }
+
+    /**
+     * Deletes files if they exist, so that anything found after the run is
+     * known to belong to that run. None of these are inputs, and the vendor
+     * exes recreate the ones they use.
+     */
+    protected function clearFiles(string ...$paths): void
+    {
+        foreach ($paths as $path) {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+
+            clearstatcache(true, $path);
+        }
+    }
+
+    /**
+     * Reads one of the exes' Windows-1251 output files as UTF-8.
+     * Returns null when the file is missing or holds only whitespace.
+     */
+    protected function readResultFile(string $path): ?string
+    {
+        clearstatcache(true, $path);
+
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $raw = trim((string) @file_get_contents($path));
+
+        if ($raw === '') {
+            return null;
+        }
+
+        return mb_convert_encoding($raw, 'UTF-8', 'Windows-1251');
+    }
+
+    /**
+     * Maps filename => size for every file in a directory, or an empty array
+     * when the directory does not exist yet.
+     */
+    protected function snapshotFiles(string $dir): array
+    {
+        clearstatcache();
+
+        if (!is_dir($dir)) {
+            return [];
+        }
+
+        $sizes = [];
+
+        foreach ((array) @scandir($dir) as $entry) {
+            $path = $dir . DIRECTORY_SEPARATOR . $entry;
+
+            if (is_file($path)) {
+                $sizes[$entry] = filesize($path);
+            }
+        }
+
+        return $sizes;
+    }
+
+    /**
+     * Names of files in $dir that appeared or grew since $before was taken.
+     * Size is compared as well as presence, because the exes append to an
+     * existing log rather than always creating a new file.
+     *
+     * @param array<string,int> $before
+     * @return string[]
+     */
+    protected function changedSince(array $before, string $dir): array
+    {
+        $changed = [];
+
+        foreach ($this->snapshotFiles($dir) as $name => $size) {
+            if (!array_key_exists($name, $before) || $before[$name] !== $size) {
+                $changed[] = $name;
+            }
+        }
+
+        return $changed;
+    }
 }
