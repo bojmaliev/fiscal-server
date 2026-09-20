@@ -167,14 +167,19 @@ Failures are detected by reading the files the vendor executables leave behind,
 because **none of them set a process exit code** — on its own a failed print
 looks identical to a successful one.
 
-- `fp700` / `sy250` — ecrprint writes one line per command into `ecrprint.rs`
-  naming what became of it. Anything other than `OK` fails the request, quoting
-  the command, the status and the printer's six status bytes. Anything ecrprint
-  prints to the console beyond its two version banners fails it as well, since
-  it reports the exceptions it swallows there and still exits 0.
-  **`ecrprint.err` is not an error channel** despite the name: it holds those
-  six status bytes for *every* command, successful ones included, so a run that
-  went perfectly still fills it.
+- `fp700` / `sy250` — two files, one line per command in each, because two
+  different things can go wrong. `ecrprint.rs` covers the link (`1, OK`, or
+  `NAK_RECEIVED`, `TIMEOUT_READING`, `WRONG_COMMAND_RESPONSE`, `GENERAL_ERROR`,
+  `SYNTAX_ERROR`, `INVALID_RESPONSE`, `UNKNOWN`). A command that arrived intact
+  and was then *refused* still reads `OK` there — the refusal is in
+  `ecrprint.out`, which opens with a verdict field: `P` done, `R` a payment
+  quoting the change, `F` a rejection with a code and a message
+  (`F -1004 Bad input`). Either one fails the request, quoting the command.
+  Anything ecrprint prints to the console beyond its two version banners fails
+  it as well, since it reports the exceptions it swallows there and still
+  exits 0. **`ecrprint.err` is not an error channel** despite the name: it
+  holds the printer's six status bytes for *every* command, successful ones
+  included, so a run that went perfectly still fills it.
 - `severec` / `razvigorec` — `Result.out` is checked for `ERROR:` / `Fatal Error!`,
   and `Log\Error\` is checked for any file that appeared or grew.
 
@@ -197,7 +202,7 @@ out". Treat `500` as authoritative and `200` as optimistic.
 | 400 | `items and payments are required` | empty array on `q=fiscal` |
 | 400 | `Invalid VAT code: X` | `vat` outside `A`/`B`/`V`/`G` |
 | 400 | `Invalid date. Expected YYYY-MM-DD format.` | bad `from`/`to` |
-| 500 | `ecrprint: the printer rejected command N of M (…) — …` | the Accent till refused that command |
+| 500 | `ecrprint: the printer rejected command N of M (…) — …` | the Accent till refused that command, or never answered it |
 | 500 | `ecrprint reported: …` | ecrprint gave up before talking to the printer (missing `ecr.dll`, unreadable `ecrprint.xml`, no `ecrprint.in`) |
 | 500 | `Severec.exe reported: …` | error line in `Result.out` |
 | 500 | `… wrote to its error log (…): …` | Duna executable logged an error |
@@ -253,23 +258,23 @@ paired with what the printer made of it. Unprintable bytes are escaped, so the
 sequence byte and the tab-delimited fields stay countable:
 
 ```
-[2026-09-20 13:02:31] SY250Driver port=COM4 speed=115200
-  1 sent D01\t1\t\t0\t
-    got  OK, OK | status 4, 0, 0, 0, 0, 0
-  2 sent E1\xC5\xD1\xCF\xD0\xC5\xD1\xCE\t1\t70.00\t1.000\t0\t\t\t
-    got  SYNTAX_ERROR, SYNTAX_ERROR | status 5, 0, 0, 0, 0, 0
-  3 sent F50\t70.00\t
-    got  not sent
-  4 sent G8
-    got  not sent
+[2026-09-20 19:15:42] SY250Driver port=COM3 speed=115200
+  1 sent #01\t1\t\t0\t
+    got  1, OK | status 128, 128, 136, 128, 134, 154 | returned P	1634
+  2 sent $1\xC5\xF1\xEF\xF0\xE5\xF1\xEE\t4\t70.00\t1.000\t0\t\t\t
+    got  1, OK | status 128, 128, 136, 128, 134, 154 | returned F	-1004	Bad input
+  3 sent %50\t70.00\t
+    got  1, OK | status 128, 128, 136, 128, 134, 154 | returned R	70.00
+  4 sent &8
+    got  1, OK | status 128, 128, 128, 128, 134, 154 | returned P	1634
 ```
 
-`got` is the `ecrprint.rs` entry for that command — `OK`, or one of
-`NAK_RECEIVED`, `TIMEOUT_READING`, `WRONG_COMMAND_RESPONSE`, `GENERAL_ERROR`,
-`SYNTAX_ERROR`, `INVALID_RESPONSE`, `UNKNOWN` — followed by the six status bytes
-from `ecrprint.err` and any data the command returned in `ecrprint.out`.
-`not sent` marks the commands `<stopOnFail>` skipped after a failure, and
-`skipped` a line too short for ecrprint to send at all.
+`got` is the `ecrprint.rs` entry for that command, then the six status bytes
+from `ecrprint.err`, then whatever the command returned in `ecrprint.out`. The
+run above is a receipt whose item line was refused while the link stayed
+healthy throughout — which is why all three are worth keeping. `not sent`
+marks commands `<stopOnFail>` skipped after a failure, and `skipped` a line
+too short for ecrprint to send at all.
 
 Every response also carries **`X-Fiscal-Driver`** naming the driver that ran
 (exposed to browsers via `Access-Control-Expose-Headers`). Both exist because
@@ -310,12 +315,17 @@ receipt number:
 ```
 
 `bin/accent/ecrprint.xml` ships with `<stopOnFail>true</stopOnFail>`, so an
-Accent till abandons the rest of a batch as soon as one command fails. On
-`q=fiscal` that matters for more than diagnosis: with `false`, a rejected item
-line is skipped and the payment and close commands still run, which issues a
-real fiscal receipt with no items, a 0.00 total and the full tendered amount
-handed back as change. The cost of `true` is that the receipt is left open on
-the printer for the operator to void.
+Accent till abandons the rest of a batch once a command fails. **It only
+covers the link**, though: ecrprint stops on a non-`OK` `ecrprint.rs` entry
+and nothing else, so a command the printer answered and refused does not stop
+it. On `q=fiscal` that has teeth — a refused item line is passed over while
+the payment and close commands still run, which issues a real fiscal receipt
+with no items, a 0.00 total and the full tendered amount handed back as
+change. The server detects that and returns 500, but the paper is already out.
+
+Avoiding it altogether means not sending the payment and close commands until
+the items are known to have registered, i.e. splitting `fiscal()` across two
+ecrprint runs instead of one.
 
 Both Duna executables also read two extra keys from `FISKAL.INI` that are not
 exposed through the API: `BEZFISKALNA` (non-fiscal test receipts — useful for

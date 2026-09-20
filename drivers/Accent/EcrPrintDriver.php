@@ -18,12 +18,18 @@ abstract class EcrPrintDriver implements PrinterDriver
     protected const SEQ_MAX = 255;
 
     /**
-     * The one EcrResultStatus that means the printer carried the command out.
-     * The rest of ecrprint's vocabulary — NAK_RECEIVED, TIMEOUT_READING,
+     * The one EcrResultStatus that means ecrprint got a clean answer back. The
+     * rest of its vocabulary — NAK_RECEIVED, TIMEOUT_READING,
      * WRONG_COMMAND_RESPONSE, GENERAL_ERROR, SYNTAX_ERROR, INVALID_RESPONSE,
      * UNKNOWN — are all ways of not having done so.
      */
     private const STATUS_OK = 'OK';
+
+    /**
+     * The verdict the printer opens its reply with when it refuses a command.
+     * The ones that mean it obliged are 'P' and, for a payment, 'R'.
+     */
+    private const REPLY_REFUSED = 'F';
 
     /** ecrprint announces itself on stdout before doing anything. */
     private const BANNERS = ['Ecr DLL Version:', 'Ecr EXE Version:'];
@@ -161,13 +167,19 @@ abstract class EcrPrintDriver implements PrinterDriver
     /**
      * Names the first command the printer did not carry out, or null.
      *
-     * ecrprint.rs is the only file that says so: it holds one EcrResultStatus
-     * per command. ecrprint.err is *not* an error channel despite the name —
-     * it holds the printer's six status bytes for every command, successful
-     * ones included, so a run that went perfectly still fills it. ecrprint.out
-     * holds whatever data each command returned. Both are quoted into the
-     * failure because "which command, and what did the till say about it" is
-     * the only useful form of this error.
+     * Two different things can go wrong, and they are reported in two
+     * different files. ecrprint.rs covers the link: one EcrResultStatus per
+     * command, written as "<value>, <name>" (`1, OK`), saying whether ecrprint
+     * got a clean answer at all. A command that arrived intact and was then
+     * *refused* still reads OK there — the refusal is in the data the printer
+     * sent back, in ecrprint.out, which opens with a verdict field: `P` for
+     * done, `R` for a payment quoting the change, and `F` followed by a code
+     * and a message for a rejection (`F -1004 Bad input`).
+     *
+     * ecrprint.err is *not* an error channel despite the name: it holds the
+     * printer's six status bytes for every command, successful ones included,
+     * so a run that went perfectly still fills it. It is quoted here as
+     * context and nothing more.
      *
      * @param string[] $commands One raw command line each.
      * @param string[] $outcomes EcrResultStatus per command.
@@ -179,29 +191,44 @@ abstract class EcrPrintDriver implements PrinterDriver
         foreach ($outcomes as $index => $outcome) {
             // A blank entry is a line ecrprint skipped, not a rejected command:
             // it needs two characters (sequence byte + command code) to send
-            // anything, and the batches end in a blank line.
-            if ($outcome === '' || str_starts_with($outcome, self::STATUS_OK)) {
+            // anything, and the FP700 batches end in a blank line.
+            if ($outcome === '') {
                 continue;
             }
 
-            $bytes  = $statuses[$index] ?? '';
-            $detail = ['status ' . ($bytes === '' ? 'none' : $bytes)];
+            $reply = $replies[$index] ?? '';
 
-            if (($replies[$index] ?? '') !== '') {
-                $detail[] = 'returned ' . $replies[$index];
+            if (!$this->linkFailed($outcome) && !$this->refused($reply)) {
+                continue;
             }
 
+            $bytes = $statuses[$index] ?? '';
+
             return sprintf(
-                'ecrprint: the printer rejected command %d of %d (%s) — %s (%s)',
+                'ecrprint: the printer rejected command %d of %d (%s) — %s (status %s)',
                 $index + 1,
                 count($commands),
                 $this->readable($commands[$index] ?? ''),
-                $outcome,
-                implode(', ', $detail)
+                $this->linkFailed($outcome) ? $outcome : str_replace("\t", ' ', $reply),
+                $bytes === '' ? 'none' : $bytes
             );
         }
 
         return null;
+    }
+
+    /** True when ecrprint never got a clean answer back for this command. */
+    private function linkFailed(string $outcome): bool
+    {
+        $fields = array_map('trim', explode(',', $outcome));
+
+        return end($fields) !== self::STATUS_OK;
+    }
+
+    /** True when the printer answered and its answer was a refusal. */
+    private function refused(string $reply): bool
+    {
+        return explode("\t", $reply)[0] === self::REPLY_REFUSED;
     }
 
     /**
