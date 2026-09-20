@@ -28,9 +28,14 @@ trait ProcessRunner
      * @param string   $execPath Absolute path to the executable.
      * @param string[] $args     Extra command-line arguments.
      *
+     * @return string Everything the process wrote to stdout and stderr. An exe
+     *                that reports a failure there and still exits 0 — ecrprint
+     *                prints the message of every exception it catches — is
+     *                otherwise indistinguishable from one that worked.
+     *
      * @throws \RuntimeException if the process cannot be started or exits non-zero.
      */
-    protected function runProcess(string $execPath, array $args = []): void
+    protected function runProcess(string $execPath, array $args = []): string
     {
         $descriptors = [
             1 => ['pipe', 'w'],
@@ -55,15 +60,18 @@ trait ProcessRunner
         fclose($pipes[2]);
 
         $exitCode = proc_close($process);
+        $console  = trim($stdout . "\n" . $stderr);
 
         if ($exitCode !== 0) {
             throw new \RuntimeException(sprintf(
                 '%s exited with code %d: %s',
                 basename($execPath),
                 $exitCode,
-                trim($stdout . ' ' . $stderr)
+                $console
             ));
         }
+
+        return $console;
     }
 
     /**

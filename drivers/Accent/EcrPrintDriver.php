@@ -7,6 +7,7 @@
  *   - file paths (seq.txt, ecrprint.in, ecrprint.exe)
  *   - sequence-byte cycling (33–255, wrapping to 32)
  *   - writing the command file and invoking the executable
+ *   - reading back what the printer made of each command
  *   - UTF-8 → Windows-1251 encoding helper
  */
 abstract class EcrPrintDriver implements PrinterDriver
@@ -15,6 +16,17 @@ abstract class EcrPrintDriver implements PrinterDriver
 
     protected const SEQ_MIN = 32;
     protected const SEQ_MAX = 255;
+
+    /**
+     * The one EcrResultStatus that means the printer carried the command out.
+     * The rest of ecrprint's vocabulary — NAK_RECEIVED, TIMEOUT_READING,
+     * WRONG_COMMAND_RESPONSE, GENERAL_ERROR, SYNTAX_ERROR, INVALID_RESPONSE,
+     * UNKNOWN — are all ways of not having done so.
+     */
+    private const STATUS_OK = 'OK';
+
+    /** ecrprint announces itself on stdout before doing anything. */
+    private const BANNERS = ['Ecr DLL Version:', 'Ecr EXE Version:'];
 
     protected string $seqFile;
     protected string $inputFile;
@@ -105,73 +117,231 @@ abstract class EcrPrintDriver implements PrinterDriver
     }
 
     /**
-     * ecrprint.exe takes no arguments — it reads the file named by
-     * <defaultInputFileName> in ecrprint.xml, and looks up both of those
-     * relative to its working directory. runProcess() supplies bin/accent as
-     * that working directory, which is where initPaths() writes ecrprint.in.
+     * Sends one batch of commands and fails if the printer refused any of them.
+     *
+     * ecrprint.exe reads the file named by <defaultInputFileName> in
+     * ecrprint.xml, and looks up both of those relative to its working
+     * directory. runProcess() supplies bin/accent as that working directory,
+     * which is where initPaths() writes ecrprint.in.
      */
     protected function execute(string $content): void
     {
-        // ecrprint.exe never sets a process exit code, so the only evidence
-        // that a print failed is ecrprint.err. Clear the output files first so
-        // whatever exists afterwards is known to be from this run.
+        // The exe always exits 0, so nothing about a failed print is visible
+        // from the outside: it prints the message of any exception it swallowed
+        // to stdout, and leaves what the printer said about each command in
+        // three files. Clear those first so whatever is there afterwards is
+        // known to be from this run.
         $this->clearFiles($this->errFile, $this->outFile, $this->resultFile);
 
         file_put_contents($this->inputFile, $content, LOCK_EX);
 
-        $this->runProcess($this->execPath);
+        $console = $this->consoleError($this->runProcess($this->execPath));
 
-        $error = $this->readResultFile($this->errFile);
+        // ecrprint appends one entry to each of the three files per line it
+        // read from ecrprint.in, in order — including a blank entry for a line
+        // it skipped — so entry N in all three belongs to command N.
+        $commands = $this->splitLines($content);
+        $outcomes = $this->readResultLines($this->resultFile);
+        $statuses = $this->readResultLines($this->errFile);
+        $replies  = $this->readResultLines($this->outFile);
 
-        $this->logRun($content, $error);
+        $this->logRun($commands, $console, $outcomes, $statuses, $replies);
 
-        if ($error !== null) {
-            $context = $this->readResultFile($this->resultFile)
-                ?? $this->readResultFile($this->outFile);
+        if ($console !== null) {
+            throw new \RuntimeException('ecrprint reported: ' . $console);
+        }
 
-            throw new \RuntimeException(
-                'ecrprint reported: ' . $error . ($context === null ? '' : ' | ' . $context)
+        $rejected = $this->rejection($commands, $outcomes, $statuses, $replies);
+
+        if ($rejected !== null) {
+            throw new \RuntimeException($rejected);
+        }
+    }
+
+    /**
+     * Names the first command the printer did not carry out, or null.
+     *
+     * ecrprint.rs is the only file that says so: it holds one EcrResultStatus
+     * per command. ecrprint.err is *not* an error channel despite the name —
+     * it holds the printer's six status bytes for every command, successful
+     * ones included, so a run that went perfectly still fills it. ecrprint.out
+     * holds whatever data each command returned. Both are quoted into the
+     * failure because "which command, and what did the till say about it" is
+     * the only useful form of this error.
+     *
+     * @param string[] $commands One raw command line each.
+     * @param string[] $outcomes EcrResultStatus per command.
+     * @param string[] $statuses Six printer status bytes per command.
+     * @param string[] $replies  Returned data per command.
+     */
+    private function rejection(array $commands, array $outcomes, array $statuses, array $replies): ?string
+    {
+        foreach ($outcomes as $index => $outcome) {
+            // A blank entry is a line ecrprint skipped, not a rejected command:
+            // it needs two characters (sequence byte + command code) to send
+            // anything, and the batches end in a blank line.
+            if ($outcome === '' || str_starts_with($outcome, self::STATUS_OK)) {
+                continue;
+            }
+
+            $bytes  = $statuses[$index] ?? '';
+            $detail = ['status ' . ($bytes === '' ? 'none' : $bytes)];
+
+            if (($replies[$index] ?? '') !== '') {
+                $detail[] = 'returned ' . $replies[$index];
+            }
+
+            return sprintf(
+                'ecrprint: the printer rejected command %d of %d (%s) — %s (%s)',
+                $index + 1,
+                count($commands),
+                $this->readable($commands[$index] ?? ''),
+                $outcome,
+                implode(', ', $detail)
             );
         }
+
+        return null;
+    }
+
+    /**
+     * The part of ecrprint's console output that is a complaint, or null.
+     *
+     * It prints two version banners and nothing else when it runs to
+     * completion. Anything further is the message of an exception it caught —
+     * a missing ecr.dll, an unreadable ecrprint.xml, no ecrprint.in — after
+     * which it still exits 0 and still writes three empty result files, so
+     * this is the only evidence such a run ever happened.
+     */
+    private function consoleError(string $console): ?string
+    {
+        $complaints = array_filter(
+            array_map('trim', $this->splitLines($console)),
+            static function (string $line): bool {
+                foreach (self::BANNERS as $banner) {
+                    if (str_starts_with($line, $banner)) {
+                        return false;
+                    }
+                }
+
+                return $line !== '';
+            }
+        );
+
+        return $complaints === [] ? null : implode(' | ', $complaints);
+    }
+
+    /**
+     * Reads one of ecrprint's per-command files as a list of entries.
+     *
+     * @return string[]
+     */
+    private function readResultLines(string $path): array
+    {
+        clearstatcache(true, $path);
+
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = mb_convert_encoding((string) @file_get_contents($path), 'UTF-8', 'Windows-1251');
+
+        return array_map('trim', $this->splitLines($raw));
+    }
+
+    /**
+     * Splits text the way File.ReadAllLines does inside ecrprint — on any line
+     * ending, with the final line terminator not counting as another line — so
+     * an entry in its output files maps back to the command that produced it.
+     *
+     * Nothing is trimmed: a command line ends in a meaningful tab, and the log
+     * is worth little if it does not show the field separators that were
+     * actually sent.
+     *
+     * @return string[]
+     */
+    private function splitLines(string $raw): array
+    {
+        $lines = preg_split("/\r\n|\r|\n/", $raw);
+
+        if (end($lines) === '') {
+            array_pop($lines);
+        }
+
+        return $lines;
     }
 
     /**
      * Appends what went out and what came back to ecrprint.log.
      *
-     * A print that fails quietly leaves nothing to look at afterwards: the exe
-     * reports nothing on success, and the next run overwrites ecrprint.in. Off
-     * the back of a till test that "did not print", this is the only way to
-     * tell which model's dialect actually went down the wire.
+     * A print that fails quietly leaves nothing to look at afterwards: the next
+     * run overwrites both ecrprint.in and all three result files. Off the back
+     * of a till test that "did not print", this is the only way to tell which
+     * model's dialect went down the wire and which command the printer balked
+     * at.
+     *
+     * @param string[] $commands
+     * @param string[] $outcomes
+     * @param string[] $statuses
+     * @param string[] $replies
      */
-    private function logRun(string $content, ?string $error): void
-    {
+    private function logRun(
+        array $commands,
+        ?string $console,
+        array $outcomes,
+        array $statuses,
+        array $replies
+    ): void {
         $entry = sprintf(
-            "[%s] %s port=%s speed=%s\n  sent: %s\n",
+            "[%s] %s port=%s speed=%s\n",
             date('Y-m-d H:i:s'),
             static::class,
             $this->effectivePort,
-            $this->effectiveSpeed,
-            // the batch ends in CRLF; no need for a dangling indent line
-            preg_replace('/\n\s*$/', '', $this->readable($content))
+            $this->effectiveSpeed
         );
 
-        $results = [
-            'err' => $error,
-            'out' => $this->readResultFile($this->outFile),
-            'rs'  => $this->readResultFile($this->resultFile),
-        ];
+        if ($console !== null) {
+            $entry .= '  console: ' . $console . "\n";
+        }
 
-        foreach ($results as $name => $text) {
-            if ($text !== null) {
-                $entry .= sprintf("  %s : %s\n", $name, str_replace("\n", ' | ', $text));
-            }
+        foreach ($commands as $index => $command) {
+            // A command with no entry beside it was never sent: ecrprint stops
+            // at the first failure when <stopOnFail> is on.
+            $entry .= sprintf(
+                "  %d sent %s\n    got  %s\n",
+                $index + 1,
+                $this->readable($command),
+                $this->outcomeSummary($outcomes, $statuses, $replies, $index)
+            );
         }
 
         @file_put_contents($this->logFile, $entry, FILE_APPEND | LOCK_EX);
     }
 
     /**
-     * Renders the command bytes for the log. Every field in this protocol is
+     * @param string[] $outcomes
+     * @param string[] $statuses
+     * @param string[] $replies
+     */
+    private function outcomeSummary(array $outcomes, array $statuses, array $replies, int $index): string
+    {
+        if (!array_key_exists($index, $outcomes)) {
+            return 'not sent';
+        }
+
+        $parts = [$outcomes[$index] === '' ? 'skipped' : $outcomes[$index]];
+
+        foreach (['status' => $statuses, 'returned' => $replies] as $label => $file) {
+            if (($file[$index] ?? '') !== '') {
+                $parts[] = $label . ' ' . $file[$index];
+            }
+        }
+
+        return implode(' | ', $parts);
+    }
+
+    /**
+     * Renders one command's bytes for the log. Every field in this protocol is
      * delimited by whitespace and the sequence byte is often unprintable, so
      * escaping them is the whole point — a receipt is also mostly
      * Windows-1251 text that would not survive a plain text log.
@@ -183,7 +353,7 @@ abstract class EcrPrintDriver implements PrinterDriver
             fn(array $m) => match ($m[0]) {
                 "\t"    => '\t',
                 "\r"    => '\r',
-                "\n"    => "\\n\n        ",
+                "\n"    => '\n',
                 default => sprintf('\x%02X', ord($m[0])),
             },
             $raw

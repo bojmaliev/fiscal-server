@@ -2,6 +2,6 @@
 <setup>
 	<port>COM1</port>
 	<speed>9600</speed>
-	<stopOnFail>false</stopOnFail>
+	<stopOnFail>true</stopOnFail>
 	<defaultInputFileName>ecrprint.in</defaultInputFileName>
 </setup>
