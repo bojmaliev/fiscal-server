@@ -143,7 +143,7 @@ class SeverecDriver extends EcrPrintDriver
 
     private function itemCmd(array $item): string
     {
-        $name  = $this->win1251($item['name']);
+        $name  = $this->itemName($item['name']);
         $vat   = $this->vatCode($item['vat'] ?? 'A');
         $mkd   = ($item['mkd'] ?? false) ? '@' : '';
         $price = number_format((float) $item['price'],           2, '.', '');

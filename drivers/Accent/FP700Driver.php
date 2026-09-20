@@ -62,7 +62,7 @@ class FP700Driver extends EcrPrintDriver
 
     private function itemData(array $item): string
     {
-        $name     = $this->win1251($item['name']);
+        $name     = $this->itemName($item['name']);
         $vat      = $this->vatByte($item['vat'] ?? 'A');
         $price    = number_format((float)$item['price'],    2, '.', '');
         $quantity = number_format((float)($item['quantity'] ?? 1), 3, '.', '');

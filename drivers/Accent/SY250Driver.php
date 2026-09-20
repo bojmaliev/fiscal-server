@@ -89,7 +89,7 @@ class SY250Driver extends EcrPrintDriver
     {
         return $this->cmd(
             '1',
-            $this->win1251($item['name']),
+            $this->itemName($item['name']),
             $this->taxCode($item['vat'] ?? 'A'),
             number_format((float) $item['price'],           2, '.', ''),
             number_format((float) ($item['quantity'] ?? 1), 3, '.', ''),

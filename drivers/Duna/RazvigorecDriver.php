@@ -117,7 +117,7 @@ class RazvigorecDriver implements PrinterDriver
 
     private function itemLine(array $item): string
     {
-        $name  = $this->win1251($item['name']);
+        $name  = $this->itemName($item['name']);
         $vat   = $this->vatCode($item['vat'] ?? 'A');
         $price = number_format((float) $item['price'],           2, '.', '');
         $qty   = number_format((float) ($item['quantity'] ?? 1), 3, '.', '');
@@ -178,6 +178,20 @@ class RazvigorecDriver implements PrinterDriver
     private function win1251(string $content): string
     {
         return mb_convert_encoding($content, 'Windows-1251', 'UTF-8');
+    }
+
+    /**
+     * Prepares a product name for the printer: upper-cased, then Windows-1251.
+     *
+     * Every vendor reference file names its products in capitals and the
+     * receipts these tills print come out in capitals, so anything else only
+     * differs from what the customer ends up reading. strtoupper() is
+     * byte-based and would leave Cyrillic untouched, so the case change is
+     * mb_strtoupper() on the UTF-8 string and the encoding follows it.
+     */
+    private function itemName(string $name): string
+    {
+        return $this->win1251(mb_strtoupper($name, 'UTF-8'));
     }
 
     /**

@@ -87,7 +87,7 @@ Both arrays are required and must be non-empty (`400` otherwise).
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `name` | string | yes | UTF-8; converted to Windows-1251 for the printer |
+| `name` | string | yes | UTF-8; upper-cased, then converted to Windows-1251 for the printer |
 | `vat` | string | no (`A`) | `A`, `B`, `V` or `G`. Anything else → **400** |
 | `price` | number | yes | Unit price, 2 decimals |
 | `quantity` | number | no (`1`) | 3 decimals |
