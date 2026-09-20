@@ -8,10 +8,15 @@ class FP700Driver extends EcrPrintDriver
     // chr(64) = '@' — marks a Macedonian product in the FP700 binary protocol
     private const MKD_ITEM = '@';
 
+    // Both Accent models are driven through the same ecrprint.xml, so each
+    // driver states the rate its own printer runs at rather than trusting
+    // whatever the other one left in the file.
+    private const DEFAULT_SPEED = '9600';
+
     public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
         $this->initPaths($basePath);
-        $this->applySerialSettings($port, $speed);
+        $this->applySerialSettings($port, $speed ?? self::DEFAULT_SPEED);
     }
 
     public function fiscal(array $items, array $payments): void

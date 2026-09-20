@@ -38,22 +38,28 @@ both are present.
 |---|---|---|
 | `driver` | `fp700`, `sy250`, `severec`, `razvigorec` | `fp700` |
 | `port` | `COM1`–`COM999`, case-insensitive | leave the printer's existing setting |
-| `speed` | digits only — see note below | leave the printer's existing setting |
+| `speed` | digits only — see notes below | `fp700` 9600, `sy250` 115200, other drivers untouched |
 
 ```
 ?q=fiscal&driver=severec&port=COM4
 ```
 
-Omitting `port`/`speed` leaves the vendor config file **byte-for-byte
-untouched**, so a till someone configured by hand keeps working. Supplying one
-rewrites just that value before the print (`ecrprint.xml`, `FISKAL.INI` or
-`Razvigorec.ini` depending on the driver) — see
+Omitting `port` leaves the vendor config file **byte-for-byte untouched**, so a
+till someone configured by hand keeps working. Supplying a value rewrites just
+that field before the print (`ecrprint.xml`, `FISKAL.INI` or `Razvigorec.ini`
+depending on the driver) — see
 [Side effects](#side-effects-of-port-and-speed).
 
 > **`speed` is not the same unit on every driver.** `fp700`/`sy250` take a
-> literal baud rate (`9600`). `severec` takes a vendor *code*, not a baud rate
-> (its shipped config uses `5`). `razvigorec` has no baud setting at all and
-> returns **400** if you send one.
+> literal baud rate. `severec` takes a vendor *code*, not a baud rate (its
+> shipped config uses `5`). `razvigorec` has no baud setting at all and returns
+> **400** if you send one.
+
+> **The Accent drivers always write their own baud rate.** `fp700` and `sy250`
+> share one `ecrprint.xml` but the two models do not run at the same rate, so
+> omitting `speed` there does *not* mean "leave it alone": `fp700` writes
+> `9600` and `sy250` writes `115200` on every run. Send an explicit `speed` to
+> override either.
 
 Defaults live in [index.php](index.php#L34-L37) as `PRINTER_DRIVER`,
 `PRINTER_PORT` and `PRINTER_SPEED`.
@@ -205,7 +211,7 @@ out". Treat `500` as authoritative and `200` as optimistic.
 | `q=period-short-report` | ✅ | ✅ | ✅ | ⚠️ date format unconfirmed |
 | `mkd` item flag | ✅ | ✅ | ✅ | ignored |
 | `port` | ✅ | ✅ | ✅ | ✅ |
-| `speed` | ✅ baud | ✅ baud | ✅ vendor code | ❌ `400` |
+| `speed` | ✅ baud (default 9600) | ✅ baud (default 115200) | ✅ vendor code | ❌ `400` |
 
 `fp700` and `sy250` share `ecrprint.exe`; `severec` and `razvigorec` are the two
 Duna executables.
@@ -218,8 +224,9 @@ Duna executables.
 
 None of the vendor executables accept a serial port as a command-line argument,
 so the only way to steer them is to rewrite their config file before the run.
-When you send `port` or `speed`, the corresponding file is updated in place —
-only that value, and only when it actually differs:
+When you send `port` or `speed` — and on `fp700`/`sy250` on every run, since
+those two always write their own baud rate — the corresponding file is updated
+in place, only that value and only when it actually differs:
 
 | Driver | File | Field |
 |---|---|---|
@@ -230,6 +237,28 @@ only that value, and only when it actually differs:
 Those three files are tracked in git, so per-request writes show up as local
 modifications on the till. Either accept `git checkout --` on them when pulling,
 or mark them `git update-index --skip-worktree` per install.
+
+### Knowing what was actually sent
+
+Every `fp700`/`sy250` run appends to `bin/accent/ecrprint.log` (gitignored):
+the resolved driver, the port and baud the exe ran with, the exact command
+bytes, and anything ecrprint wrote back. Unprintable bytes are escaped, so the
+sequence byte and the tab-delimited fields stay countable:
+
+```
+[2026-09-20 13:02:31] SY250Driver port=COM4 speed=115200
+  sent: Z01\t1\t\t0\t\r\n
+        [1\xD1\xCC\xCE\xCA\xC8\t1\t10.00\t1.000\t1\t\t\t\r\n
+        ]50\t30.00\t\r\n
+        _8\r\n
+  out : OK
+```
+
+Every response also carries **`X-Fiscal-Driver`** naming the driver that ran
+(exposed to browsers via `Access-Control-Expose-Headers`). Both exist because
+driving a till with the wrong model's dialect does not look like a
+configuration mistake from the outside — the short report commands survive it
+and only the receipt fails to appear.
 
 ### One request at a time
 

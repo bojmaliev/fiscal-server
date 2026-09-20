@@ -1,5 +1,6 @@
 ecrprint.err
 ecrprint.in
+ecrprint.log
 ecrprint.out
 ecrprint.rs
 bin/accent/seq.txt

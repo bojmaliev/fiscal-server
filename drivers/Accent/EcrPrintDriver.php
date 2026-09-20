@@ -23,6 +23,11 @@ abstract class EcrPrintDriver implements PrinterDriver
     protected string $errFile;
     protected string $outFile;
     protected string $resultFile;
+    protected string $logFile;
+
+    /** What the exe will actually use, whether this request set it or not. */
+    protected string $effectivePort  = '?';
+    protected string $effectiveSpeed = '?';
 
     protected function initPaths(string $basePath): void
     {
@@ -34,6 +39,7 @@ abstract class EcrPrintDriver implements PrinterDriver
         $this->errFile    = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.err';
         $this->outFile    = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.out';
         $this->resultFile = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.rs';
+        $this->logFile    = $accentDir . DIRECTORY_SEPARATOR . 'ecrprint.log';
     }
 
     /**
@@ -41,8 +47,11 @@ abstract class EcrPrintDriver implements PrinterDriver
      *
      * None of the vendor executables accept the port as a command-line
      * argument, so the only way to steer them is to rewrite their config file
-     * before the run. Both parameters are optional: when omitted the file is
-     * left byte-for-byte alone, so a device configured by hand keeps working.
+     * before the run. A null port leaves <port> byte-for-byte alone, so a till
+     * someone wired up by hand keeps working; the concrete drivers, sharing
+     * this one file between two models, always pass a speed of their own.
+     *
+     * Either way the file is rewritten only when a value actually differs.
      *
      * @param string|null $speed Literal baud rate for ecrprint (e.g. "9600").
      */
@@ -81,6 +90,18 @@ abstract class EcrPrintDriver implements PrinterDriver
         if ($changed && file_put_contents($this->configFile, $doc->saveXML(), LOCK_EX) === false) {
             throw new \RuntimeException('Cannot write ' . $this->configFile);
         }
+
+        // Kept for the run log: the file is already parsed here, and the log is
+        // only useful if it records the settings the exe really ran with.
+        $this->effectivePort  = $this->configValue($doc, 'port');
+        $this->effectiveSpeed = $this->configValue($doc, 'speed');
+    }
+
+    private function configValue(\DOMDocument $doc, string $tag): string
+    {
+        $node = $doc->getElementsByTagName($tag)->item(0);
+
+        return $node === null ? '?' : $node->textContent;
     }
 
     /**
@@ -102,6 +123,8 @@ abstract class EcrPrintDriver implements PrinterDriver
 
         $error = $this->readResultFile($this->errFile);
 
+        $this->logRun($content, $error);
+
         if ($error !== null) {
             $context = $this->readResultFile($this->resultFile)
                 ?? $this->readResultFile($this->outFile);
@@ -110,6 +133,61 @@ abstract class EcrPrintDriver implements PrinterDriver
                 'ecrprint reported: ' . $error . ($context === null ? '' : ' | ' . $context)
             );
         }
+    }
+
+    /**
+     * Appends what went out and what came back to ecrprint.log.
+     *
+     * A print that fails quietly leaves nothing to look at afterwards: the exe
+     * reports nothing on success, and the next run overwrites ecrprint.in. Off
+     * the back of a till test that "did not print", this is the only way to
+     * tell which model's dialect actually went down the wire.
+     */
+    private function logRun(string $content, ?string $error): void
+    {
+        $entry = sprintf(
+            "[%s] %s port=%s speed=%s\n  sent: %s\n",
+            date('Y-m-d H:i:s'),
+            static::class,
+            $this->effectivePort,
+            $this->effectiveSpeed,
+            // the batch ends in CRLF; no need for a dangling indent line
+            preg_replace('/\n\s*$/', '', $this->readable($content))
+        );
+
+        $results = [
+            'err' => $error,
+            'out' => $this->readResultFile($this->outFile),
+            'rs'  => $this->readResultFile($this->resultFile),
+        ];
+
+        foreach ($results as $name => $text) {
+            if ($text !== null) {
+                $entry .= sprintf("  %s : %s\n", $name, str_replace("\n", ' | ', $text));
+            }
+        }
+
+        @file_put_contents($this->logFile, $entry, FILE_APPEND | LOCK_EX);
+    }
+
+    /**
+     * Renders the command bytes for the log. Every field in this protocol is
+     * delimited by whitespace and the sequence byte is often unprintable, so
+     * escaping them is the whole point — a receipt is also mostly
+     * Windows-1251 text that would not survive a plain text log.
+     */
+    private function readable(string $raw): string
+    {
+        return preg_replace_callback(
+            '/[^\x20-\x7e]/',
+            fn(array $m) => match ($m[0]) {
+                "\t"    => '\t',
+                "\r"    => '\r',
+                "\n"    => "\\n\n        ",
+                default => sprintf('\x%02X', ord($m[0])),
+            },
+            $raw
+        );
     }
 
     protected function nextSeq(): int

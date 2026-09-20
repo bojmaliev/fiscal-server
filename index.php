@@ -3,6 +3,7 @@
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+header("Access-Control-Expose-Headers: X-Fiscal-Driver");
 header("Access-Control-Max-Age: 86400");
 
 // Handle preflight request
@@ -28,12 +29,16 @@ require_once __DIR__ . '/drivers/Duna/RazvigorecDriver.php';
 // Configuration
 // ---------------------------------------------------------------------------
 
-// Fallbacks used when a request does not say otherwise. PRINTER_PORT and
-// PRINTER_SPEED = null mean "leave the vendor config files exactly as they are",
-// so an installation configured by hand keeps working untouched.
+// Fallbacks used when a request does not say otherwise. PRINTER_PORT = null
+// means "leave the vendor config files exactly as they are", so an installation
+// configured by hand keeps working untouched. PRINTER_SPEED = null does the
+// same for Severec, but the two Accent drivers fall back to their own model's
+// baud rate (fp700 9600, sy250 115200): they share one config file, so leaving
+// it alone would hand one model the other's rate.
 const PRINTER_DRIVER = 'fp700'; // 'fp700', 'sy250', 'severec' or 'razvigorec'
 const PRINTER_PORT   = null;    // e.g. 'COM4'
-const PRINTER_SPEED  = null;    // ecrprint: literal baud ('9600'). Severec: vendor code ('5').
+const PRINTER_SPEED  = null;    // ecrprint: literal baud, overriding the model
+                                // default. Severec: vendor code ('5').
 const PRINTER_BASE_PATH = __DIR__;
 
 // ---------------------------------------------------------------------------
@@ -70,13 +75,20 @@ function createDriver(): PrinterDriver
 
     $port = $port === null ? null : strtoupper($port);
 
-    return match ($driver) {
+    $instance = match ($driver) {
         'fp700'      => new FP700Driver(PRINTER_BASE_PATH, $port, $speed),
         'sy250'      => new SY250Driver(PRINTER_BASE_PATH, $port, $speed),
         'severec'    => new SeverecDriver(PRINTER_BASE_PATH, $port, $speed),
         'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH, $port, $speed),
         default      => throw new \InvalidArgumentException('Unknown printer driver: ' . $driver),
     };
+
+    // Echoed back because sending the wrong dialect to a till does not look
+    // like a configuration mistake from the outside: the short report
+    // commands survive it and only the receipt fails to come out.
+    header('X-Fiscal-Driver: ' . $driver);
+
+    return $instance;
 }
 
 // ---------------------------------------------------------------------------

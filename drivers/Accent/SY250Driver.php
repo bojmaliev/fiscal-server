@@ -21,13 +21,18 @@ class SY250Driver extends EcrPrintDriver
 {
     private const CRLF = "\r\n";
 
+    // The SY series runs at 115200 where the FP700 runs at 9600, and both are
+    // driven through the same ecrprint.xml — so the rate is restated on every
+    // run instead of being left as whichever driver wrote it last.
+    private const DEFAULT_SPEED = '115200';
+
     private string $opCode;
     private string $opPwd;
 
     public function __construct(string $basePath, ?string $port = null, ?string $speed = null)
     {
         $this->initPaths($basePath);
-        $this->applySerialSettings($port, $speed);
+        $this->applySerialSettings($port, $speed ?? self::DEFAULT_SPEED);
         $this->opCode = '1';
         $this->opPwd  = '1';
     }
