@@ -84,7 +84,7 @@ class SeverecDriver extends EcrPrintDriver
         }
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
         $commands = [
             // Open receipt: opCode,opPwd,receiptType (comma-separated)
@@ -101,6 +101,8 @@ class SeverecDriver extends EcrPrintDriver
         ];
 
         $this->execute(implode(self::CRLF, $commands) . self::CRLF);
+
+        return $this->receiptFromResult();
     }
 
     public function closeDayReport(): void

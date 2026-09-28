@@ -27,6 +27,7 @@ const ROOT = __DIR__ . DIRECTORY_SEPARATOR . '..';
 
 foreach ([
     'PrinterDriver',
+    'ReceiptResult',
     'ProcessRunner',
     'Accent/EcrPrintDriver',
     'Accent/FP700Driver',
@@ -493,6 +494,134 @@ foreach (['severec', 'razvigorec'] as $name) {
         throwsLike(\RuntimeException::class, 'wrote to its error log', fn() => driver($name, $base)->fiscal(ITEMS, PAYMENTS));
     });
 }
+
+// ---------------------------------------------------------------------------
+// Receipt number
+// ---------------------------------------------------------------------------
+
+/**
+ * How a SY250 answers a receipt that goes through: the shape of the live run
+ * quoted in API.md, except that the close answer carries a different number
+ * from the open one here, so a test can tell which of the two was read.
+ */
+const SY250_REPLIES = ['0' => "P\t1634\t", '1' => "P\t1634\t", '5' => "R\t0.00\t", '8' => "P\t1635\t"];
+
+test('sy250: the receipt number is the slip number the close command answers with', function () {
+    $base = till();
+    scenario($base, 'sy250', ['replies' => SY250_REPLIES]);
+
+    $receipt = driver('sy250', $base)->fiscal(ITEMS, PAYMENTS);
+
+    same(['receipt_number' => '1635', 'fiscal_memory_serial' => null], $receipt->toArray());
+});
+
+test('sy250: no receipt number unless the close answer carries one', function () {
+    foreach (['', 'P', "P\t", "P\t16a4\t", "P\t-1634\t", "R\t1634\t", "P\t\t1634\t"] as $close) {
+        $base = till();
+        scenario($base, 'sy250', ['replies' => ['8' => $close] + SY250_REPLIES]);
+
+        same(
+            ['receipt_number' => null, 'fiscal_memory_serial' => null],
+            driver('sy250', $base)->fiscal(ITEMS, PAYMENTS)->toArray(),
+            'close answered ' . show($close)
+        );
+    }
+});
+
+test('fp700: reports no receipt number, whatever the printer answers', function () {
+    // Nothing in docs/accent describes the FP700's answers, so even an answer
+    // shaped like a SY250 slip number must not be taken for one.
+    $base = till();
+    scenario($base, 'fp700', ['replies' => ['0' => '1634,0012', '8' => "P\t1634\t"]]);
+
+    same(['receipt_number' => null, 'fiscal_memory_serial' => null], driver('fp700', $base)->fiscal(ITEMS, PAYMENTS)->toArray());
+});
+
+foreach (['severec' => ['1', 'DU330999004'], 'razvigorec' => ['3', 'DU125000002']] as $name => [$number, $serial]) {
+    test("{$name}: the receipt number and serial come from Result.out", function () use ($name, $number, $serial) {
+        // What the fake writes by default…
+        $base = till();
+        same(
+            ['receipt_number' => '42', 'fiscal_memory_serial' => 'DU330999004'],
+            driver($name, $base)->fiscal(ITEMS, PAYMENTS)->toArray(),
+            'the default success report'
+        );
+
+        // …and the vendor's own sample, byte for byte.
+        $base   = till();
+        $sample = mb_convert_encoding(file_get_contents(ROOT . "/docs/{$name}/Result.out"), 'UTF-8', 'Windows-1251');
+        scenario($base, $name, ['result' => $sample]);
+
+        same(
+            ['receipt_number' => $number, 'fiscal_memory_serial' => $serial],
+            driver($name, $base)->fiscal(ITEMS, PAYMENTS)->toArray(),
+            "docs/{$name}/Result.out"
+        );
+    });
+
+    test("{$name}: no receipt number or serial unless Result.out states them", function () use ($name) {
+        $serialLine = "Сериски број на фискална меморија: DU330999004\r\n";
+
+        foreach ([
+            'no Result.out at all'    => [null, null, null],
+            'only the command line'   => ["Команда: x.in\r\n", null, null],
+            'two different numbers'   => ["Команда: x.in\r\n{$serialLine}Број на фискална сметка: 42\r\nБрој на фискална сметка: 43\r\n", null, 'DU330999004'],
+            'the same number twice'   => ["{$serialLine}Број на фискална сметка: 42\r\nБрој на фискална сметка: 42\r\n", '42', 'DU330999004'],
+            'a number with a gap'     => ["{$serialLine}Број на фискална сметка: 4 2\r\n", null, 'DU330999004'],
+            'an empty number'         => ["{$serialLine}Број на фискална сметка:\r\n", null, 'DU330999004'],
+            'a serial in two words'   => ["Сериски број на фискална меморија: DU 330999004\r\nБрој на фискална сметка: 42\r\n", '42', null],
+        ] as $case => [$result, $number, $serial]) {
+            $base = till();
+            scenario($base, $name, ['result' => $result]);
+
+            same(
+                ['receipt_number' => $number, 'fiscal_memory_serial' => $serial],
+                driver($name, $base)->fiscal(ITEMS, PAYMENTS)->toArray(),
+                $case
+            );
+        }
+    });
+}
+
+test('http: fiscal answers with the receipt as JSON, the reports keep an empty 200', function () {
+    $base = till();
+    $port = serve($base);
+    $sale = ['items' => ITEMS, 'payments' => PAYMENTS];
+
+    scenario($base, 'sy250', ['replies' => SY250_REPLIES]);
+
+    foreach ([
+        'fp700'   => '{"receipt_number":null,"fiscal_memory_serial":null}',
+        'sy250'   => '{"receipt_number":"1635","fiscal_memory_serial":null}',
+        'severec' => '{"receipt_number":"42","fiscal_memory_serial":"DU330999004"}',
+    ] as $driver => $body) {
+        $response = request($port, "/index.php?q=fiscal&driver={$driver}", $sale);
+
+        same(200, $response['status'], "status of q=fiscal on {$driver}");
+        same('application/json; charset=utf-8', $response['headers']['content-type'] ?? null, "Content-Type on {$driver}");
+        same($body, $response['body'], "body of q=fiscal on {$driver}");
+    }
+
+    // A receipt that printed stays a success when its number cannot be read.
+    scenario($base, 'sy250', ['replies' => ['8' => 'P'] + SY250_REPLIES]);
+    $response = request($port, '/index.php?q=fiscal&driver=sy250', $sale);
+    same([200, '{"receipt_number":null,"fiscal_memory_serial":null}'], [$response['status'], $response['body']], 'an unreadable close answer');
+
+    foreach ([
+        ['/index.php?q=close-day-report&driver=sy250', null],
+        ['/index.php?q=control-report&driver=sy250', null],
+        ['/index.php?q=deposit-withdraw-money&driver=sy250', ['amount' => 500]],
+        ['/index.php?q=period-short-report&driver=sy250', ['from' => '2026-08-01', 'to' => '2026-08-11']],
+    ] as [$target, $json]) {
+        $response = request($port, $target, $json);
+
+        same([200, ''], [$response['status'], $response['body']], $target);
+        check(!isset($response['headers']['content-type']) || !str_contains($response['headers']['content-type'], 'json'), "{$target} says it sends JSON");
+    }
+
+    $response = request($port, '/index.php?q=fiscal&driver=sy250', ['items' => ITEMS]);
+    same([400, '{"error":"items and payments are required"}'], [$response['status'], $response['body']], 'q=fiscal without payments');
+});
 
 // ---------------------------------------------------------------------------
 // q=ping

@@ -86,7 +86,7 @@ class RazvigorecDriver implements PrinterDriver
         }
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
         $lines = ['#F'];
 
@@ -97,6 +97,8 @@ class RazvigorecDriver implements PrinterDriver
         $lines[] = $this->paymentLine($payments);
 
         $this->execute(implode("\r\n", $lines) . "\r\n");
+
+        return $this->receiptFromResult();
     }
 
     public function closeDayReport(): void

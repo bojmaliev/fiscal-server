@@ -17,6 +17,7 @@ define('TAB', chr(9));
 define('NL', chr(10));
 
 require_once __DIR__ . '/drivers/PrinterDriver.php';
+require_once __DIR__ . '/drivers/ReceiptResult.php';
 require_once __DIR__ . '/drivers/ProcessRunner.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
 require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
@@ -149,7 +150,7 @@ function handlePing(): array
     ];
 }
 
-function handleFiscal(PrinterDriver $driver): void
+function handleFiscal(PrinterDriver $driver): ReceiptResult
 {
     $input    = jsonInput();
     $items    = $input['items']    ?? [];
@@ -159,7 +160,7 @@ function handleFiscal(PrinterDriver $driver): void
         throw new \InvalidArgumentException('items and payments are required');
     }
 
-    $driver->fiscal($items, $payments);
+    return $driver->fiscal($items, $payments);
 }
 
 function handleDepositWithdrawMoney(PrinterDriver $driver): void
@@ -245,18 +246,25 @@ try {
         exit();
     }
 
-    $driver = createDriver();
+    $driver  = createDriver();
+    $receipt = null;
 
     match ($_GET['q']) {
         'close-day-report'       => $driver->closeDayReport(),
         'control-report'         => $driver->controlReport(),
         'deposit-withdraw-money' => handleDepositWithdrawMoney($driver),
         'period-short-report'    => handlePeriodShortReport($driver),
-        'fiscal'                 => handleFiscal($driver),
+        'fiscal'                 => $receipt = handleFiscal($driver),
         default                  => throw new \InvalidArgumentException("Unknown route: {$_GET['q']}"),
     };
 
-    http_response_code(200);
+    // A receipt answers with what the vendor tooling reported about it. The
+    // reports keep their empty 200, which is all their callers look at.
+    if ($receipt === null) {
+        http_response_code(200);
+    } else {
+        respondJson(200, $receipt->toArray());
+    }
 
 } catch (\InvalidArgumentException $e) {
     respondError(400, $e->getMessage());

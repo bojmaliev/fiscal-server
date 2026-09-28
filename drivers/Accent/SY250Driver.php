@@ -21,6 +21,9 @@ class SY250Driver extends EcrPrintDriver
 {
     private const CRLF = "\r\n";
 
+    /** The verdict a reply opens with when the printer carried the command out. */
+    private const REPLY_PASSED = 'P';
+
     // The SY series runs at 115200 where the FP700 runs at 9600, and both are
     // driven through the same ecrprint.xml — so the rate is restated on every
     // run instead of being left as whichever driver wrote it last.
@@ -37,7 +40,7 @@ class SY250Driver extends EcrPrintDriver
         $this->opPwd  = '1';
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
         $commands = [
             // Open fiscal receipt: opCode, opPwd, '', receiptType=0
@@ -54,6 +57,8 @@ class SY250Driver extends EcrPrintDriver
         ];
 
         $this->execute(implode(self::CRLF, $commands) . self::CRLF);
+
+        return $this->slipNumber(count($commands) - 1);
     }
 
     public function closeDayReport(): void
@@ -84,6 +89,34 @@ class SY250Driver extends EcrPrintDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * The number the printer gave the receipt it has just closed.
+     *
+     * Command 56 (close) answers {ErrorStatus}<SEP>{SlipNumber}<SEP>, the
+     * SlipNumber being the "current slip number (sales or storno)"
+     * (docs/accent/sy250/Control_codes_cash_register-v2.md); a live SY250
+     * answered it with `P\t1634`. Command 48 (open) answers the same field,
+     * but only the close answer is used — it is the one given once the receipt
+     * is complete.
+     *
+     * Anything other than a passed verdict followed by digits is reported as
+     * unknown. No command in that reference returns the fiscal memory's
+     * serial, so that stays unknown on this model.
+     *
+     * @param int $closeIndex Position of the close command in the batch.
+     */
+    private function slipNumber(int $closeIndex): ReceiptResult
+    {
+        return ReceiptResult::bestEffort(function () use ($closeIndex): ReceiptResult {
+            $fields = $this->replyFields($closeIndex);
+            $number = $fields[1] ?? '';
+
+            return new ReceiptResult(
+                ($fields[0] ?? '') === self::REPLY_PASSED && ctype_digit($number) ? $number : null
+            );
+        });
+    }
 
     private function itemCmd(array $item): string
     {

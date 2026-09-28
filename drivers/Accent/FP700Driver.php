@@ -19,7 +19,7 @@ class FP700Driver extends EcrPrintDriver
         $this->applySerialSettings($port, $speed ?? self::DEFAULT_SPEED);
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
         $commands = [
             $this->cmd('0', '1,0000,1'),
@@ -32,6 +32,14 @@ class FP700Driver extends EcrPrintDriver
         // matching the vendor reference files in docs/accent/fp700 byte for byte
         // (e.g. "…%8\r\n\r\n"). Single-command operations carry no terminator.
         $this->execute(implode(self::CRLF, $commands) . self::CRLF . self::CRLF);
+
+        // What the FP700 answers is documented nowhere in docs/accent. The
+        // command reference there is the SY series' — tab-separated fields,
+        // P/F verdicts — not the comma-separated dialect this model speaks,
+        // and the FP700 samples are input only. A number read out of an answer
+        // nobody has described would be a guess, so none is reported;
+        // ecrprint.log records what the printer did send back.
+        return ReceiptResult::unknown();
     }
 
     public function closeDayReport(): void

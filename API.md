@@ -61,7 +61,7 @@ depending on the driver) — see
 > `9600` and `sy250` writes `115200` on every run. Send an explicit `speed` to
 > override either.
 
-Defaults live in [index.php](index.php#L41-L44) as `PRINTER_DRIVER`,
+Defaults live in [index.php](index.php#L42-L45) as `PRINTER_DRIVER`,
 `PRINTER_PORT` and `PRINTER_SPEED`.
 
 ---
@@ -133,6 +133,13 @@ curl -X POST 'http://localhost:8000/index.php?q=fiscal&port=COM4' \
        "payments":[{"amount":10,"cash":true}]}'
 ```
 
+Answers `200` with the number the receipt was given, where the driver can read
+it — see [Receipt number](#receipt-number):
+
+```json
+{ "receipt_number": "42", "fiscal_memory_serial": "DU330999004" }
+```
+
 ### `q=close-day-report` — Z report
 
 Closes the fiscal day and resets daily totals. No body.
@@ -173,8 +180,9 @@ or impossible date.
 
 | Status | Body | Meaning |
 |---|---|---|
-| `200` | *empty* | The command was sent and no failure was detected |
-| `200` | JSON | `q=ping` only — see [above](#qping--health-check) |
+| `200` | `{"receipt_number": …, "fiscal_memory_serial": …}` | `q=fiscal`: the receipt was sent and no failure was detected — see [Receipt number](#receipt-number) |
+| `200` | *empty* | Every other printing route: the command was sent and no failure was detected |
+| `200` | `{"ok": true, …}` | `q=ping` — see [above](#qping--health-check) |
 | `400` | `{"error": "..."}` | Bad request — your input |
 | `500` | `{"error": "..."}` | The printer or vendor executable failed |
 
@@ -213,6 +221,58 @@ reporting a receipt that *did* print as failed would invite a duplicate fiscal
 receipt. So `200` means "no error was reported", not "paper definitely came
 out". Treat `500` as authoritative and `200` as optimistic.
 
+### Receipt number
+
+`q=fiscal` answers `200` with two fields, each a string or `null`:
+
+```json
+{ "receipt_number": "1634", "fiscal_memory_serial": null }
+```
+
+Both are read from what the vendor tooling leaves behind once the receipt has
+printed, and each is `null` unless it came from output that is documented to
+carry it — nothing is inferred, so a number that might be the receipt's is
+never reported as the receipt's. Failing to read them never turns the response
+into an error: the paper is already out, and a printed receipt reported as
+failed invites a duplicate. So `null` means "unknown", not "not printed".
+
+| Driver | `receipt_number` | `fiscal_memory_serial` |
+|---|---|---|
+| `fp700` | always `null` | always `null` |
+| `sy250` | slip number from the close command's answer | always `null` |
+| `severec` | `Број на фискална сметка:` line of `Result.out` | `Сериски број на фискална меморија:` line of `Result.out` |
+| `razvigorec` | as `severec` | as `severec` |
+
+- **`sy250`** — `ecrprint.out` holds the printer's answer to each command. The
+  SY command reference,
+  [Control_codes_cash_register-v2.md](docs/accent/sy250/Control_codes_cash_register-v2.md),
+  documents the answer to command 56 (close receipt, `8`) as
+  `{ErrorStatus}<SEP>{SlipNumber}<SEP>`, the slip number being the "current
+  slip number (sales or storno)", and a live SY250 answered it `P\t1634`. It is
+  reported only when the verdict is `P` and the field is all digits. Command 48
+  (open receipt) answers the same field; only the close answer is used, being
+  the one given once the receipt is complete. No command in that reference
+  returns the fiscal memory serial.
+- **`fp700`** — nothing in `docs/accent` describes what this model answers. The
+  command reference there is the SY series' (tab-separated fields, `P`/`F`
+  verdicts), not the comma-separated dialect the FP700 speaks, and the FP700
+  samples are input only. Rather than guess, both fields stay `null`. Its
+  answers are still logged to `bin/accent/ecrprint.log` (see
+  [Knowing what was actually sent](#knowing-what-was-actually-sent)): a few
+  logged receipts from a real FP700, set against the paper, would show whether
+  any field is the receipt number.
+- **`severec`, `razvigorec`** — `Result.out` (Windows-1251) reads, on success:
+
+  ```
+  Команда: severec.in
+  Сериски број на фискална меморија: DU330999004
+  Број на фискална сметка: 42
+  ```
+
+  A field is `null` when its line is missing, appears twice with different
+  values, or holds anything but digits (receipt number) or a single word
+  (serial).
+
 ### Common errors
 
 | Status | Message | Cause |
@@ -246,6 +306,8 @@ out". Treat `500` as authoritative and `200` as optimistic.
 | `q=control-report` | ✅ | ✅ | ✅ | ✅ |
 | `q=deposit-withdraw-money` | ✅ | ✅ | ✅ | ❌ `500` |
 | `q=period-short-report` | ✅ | ✅ | ✅ | ⚠️ date format unconfirmed |
+| `receipt_number` | `null` | ✅ close answer | ✅ `Result.out` | ✅ `Result.out` |
+| `fiscal_memory_serial` | `null` | `null` | ✅ `Result.out` | ✅ `Result.out` |
 | `mkd` item flag | ✅ | ✅ | ✅ | ignored |
 | `port` | ✅ | ✅ | ✅ | ✅ |
 | `speed` | ✅ baud (default 9600) | ✅ baud (default 115200) | ✅ vendor code | ❌ `400` |
@@ -331,7 +393,7 @@ otherwise two concurrent requests can interleave and print to the wrong port.
 | `razvigorec` | `bin/razvigorec/Result.out`, `bin/razvigorec/Log/Error/` |
 
 On success the Duna `Result.out` also carries the fiscal memory serial and the
-receipt number:
+receipt number, which is where `q=fiscal` gets them:
 
 ```
 Команда: severec.in
@@ -356,6 +418,17 @@ Both Duna executables also read two extra keys from `FISKAL.INI` that are not
 exposed through the API: `BEZFISKALNA` (non-fiscal test receipts — useful for
 testing without consuming fiscal memory) and `LOGPRINTER` (dumps serial traffic
 to `Log\Printer\`).
+
+### Not yet verified on a till
+
+Built from the vendor documentation and samples in `docs/`, and tested against
+fakes only:
+
+- **`sy250` receipt number.** The shape of the close answer comes from a live
+  run, but nobody has yet set the slip number against the number printed on
+  the receipt.
+- **`severec` / `razvigorec` receipt number and serial.** The line format comes
+  from the vendor's sample `Result.out` files, not from a live run.
 
 ### Tests
 

@@ -66,4 +66,49 @@ trait DunaResult
             ));
         }
     }
+
+    /**
+     * The receipt number and fiscal memory serial Result.out reports once a
+     * receipt has printed (see the class docblock and docs/severec/Result.out,
+     * docs/razvigorec/Result.out).
+     *
+     * Call it only once assertResultOk() has passed: the drivers clear
+     * Result.out before every run, so whatever is there now belongs to this
+     * receipt. A field comes back null when its line is missing, appears with
+     * two different values, or holds anything but what the vendor samples
+     * show — digits for the receipt number, one word for the serial. Never an
+     * exception, since the receipt is already out.
+     */
+    protected function receiptFromResult(): ReceiptResult
+    {
+        return ReceiptResult::bestEffort(function (): ReceiptResult {
+            $result = $this->readResultFile($this->resultFile) ?? '';
+
+            return new ReceiptResult(
+                $this->resultValue($result, 'Број на фискална сметка', '/^\d+$/'),
+                $this->resultValue($result, 'Сериски број на фискална меморија', '/^\S+$/u')
+            );
+        });
+    }
+
+    /**
+     * The value after "<label>:" on the lines of Result.out that start with
+     * the label, provided they all agree and it matches $format.
+     */
+    private function resultValue(string $result, string $label, string $format): ?string
+    {
+        $values = [];
+
+        foreach (preg_split('/\r\n|\r|\n/', $result) as $line) {
+            $line = trim($line);
+
+            if (str_starts_with($line, $label . ':')) {
+                $values[] = trim(substr($line, strlen($label) + 1));
+            }
+        }
+
+        $values = array_values(array_unique($values));
+
+        return count($values) === 1 && preg_match($format, $values[0]) === 1 ? $values[0] : null;
+    }
 }
