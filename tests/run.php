@@ -624,6 +624,299 @@ test('http: fiscal answers with the receipt as JSON, the reports keep an empty 2
 });
 
 // ---------------------------------------------------------------------------
+// Storno
+// ---------------------------------------------------------------------------
+
+/** A vendor sample from docs/, as raw bytes. */
+function sample(string $path): string
+{
+    return (string) file_get_contents(ROOT . '/docs/' . $path);
+}
+
+function cp1251(string $utf8): string
+{
+    return mb_convert_encoding($utf8, 'Windows-1251', 'UTF-8');
+}
+
+/**
+ * A batch as its lines, each without its leading sequence byte — that byte is
+ * transport rather than content, and the samples' own are arbitrary. The
+ * split is on CRLF only and blank lines stay, so a stray LF or a missing
+ * terminator still shows up as a difference.
+ *
+ * @return string[]
+ */
+function withoutSequence(string $batch): array
+{
+    return array_map(static fn(string $line) => $line === '' ? '' : substr($line, 1), explode("\r\n", $batch));
+}
+
+/**
+ * The sequence bytes of a batch, as numbers.
+ *
+ * @return int[]
+ */
+function sequence(string $batch): array
+{
+    $lines = array_filter(explode("\r\n", $batch), static fn(string $line) => $line !== '');
+
+    return array_values(array_map(static fn(string $line) => ord($line[0]), $lines));
+}
+
+/** The FP700 sale batch turned into a storno the way the vendor samples do it. */
+function fp700Storno(string $sale): string
+{
+    $lines = explode("\r\n", $sale);
+    $close = max(array_keys(array_filter($lines, static fn(string $line) => $line !== '')));
+
+    check(($lines[0][1] ?? '') === '0' && ($lines[$close][1] ?? '') === '8', 'not a FP700 sale: ' . show($sale));
+
+    $lines[0][1]      = 'U';
+    $lines[$close][1] = 'V';
+
+    return implode("\r\n", $lines);
+}
+
+/** The SY250 sale batch turned into a storno the way the vendor samples do it. */
+function sy250Storno(string $sale): string
+{
+    $lines = explode("\r\n", $sale);
+
+    check(($lines[0][1] ?? '') === '0' && str_ends_with($lines[0], "\t0\t"), 'not a SY250 sale: ' . show($sale));
+
+    $lines[0] = substr($lines[0], 0, -2) . "1\t";
+
+    return implode("\r\n", $lines);
+}
+
+/** The Severec sale batch turned into a storno the way STORNO.bat does it. */
+function severecStorno(string $sale): string
+{
+    $lines = explode("\r\n", $sale);
+
+    check(($lines[0][1] ?? '') === '0', 'not a Severec sale: ' . show($sale));
+
+    $lines[0] .= ',R';
+
+    return implode("\r\n", $lines);
+}
+
+/** The Razvigorec sale turned into a storno the way Komandi.txt has it. */
+function razvigorecStorno(string $sale): string
+{
+    check(str_starts_with($sale, "#F\r\n"), 'not a Razvigorec sale: ' . show($sale));
+
+    return '#S' . substr($sale, 2);
+}
+
+/** The products of the FP700 samples, names padded exactly as the vendor pads them. */
+const SMOKI  = ['name' => 'СМОКИ       ', 'vat' => 'A', 'price' => 10, 'quantity' => 1, 'mkd' => false];
+const JOGURT = ['name' => 'ЈОГУРТ       ', 'vat' => 'A', 'price' => 10, 'quantity' => 1, 'mkd' => true];
+
+/** The products of the SY250 samples: every VAT group, standard then Macedonian. */
+const SY250_SAMPLE_ITEMS = [
+    ['name' => 'НЕМК-ДАНОК-А', 'vat' => 'A', 'price' => 10, 'quantity' => 1, 'mkd' => false],
+    ['name' => 'НЕМК-ДАНОК-Б', 'vat' => 'B', 'price' => 10, 'quantity' => 1, 'mkd' => false],
+    ['name' => 'НЕМК-ДАНОК-В', 'vat' => 'V', 'price' => 10, 'quantity' => 1, 'mkd' => false],
+    ['name' => 'НЕМК-ДАНОК-Г', 'vat' => 'G', 'price' => 10, 'quantity' => 1, 'mkd' => false],
+    ['name' => 'МК-ДАНОК-А', 'vat' => 'A', 'price' => 10, 'quantity' => 1, 'mkd' => true],
+    ['name' => 'МК-ДАНОК-Б', 'vat' => 'B', 'price' => 10, 'quantity' => 1, 'mkd' => true],
+    ['name' => 'МК-ДАНОК-В', 'vat' => 'V', 'price' => 10, 'quantity' => 1, 'mkd' => true],
+    ['name' => 'МК-ДАНОК-Г', 'vat' => 'G', 'price' => 10, 'quantity' => 1, 'mkd' => true],
+];
+
+test('fp700: storno sends what the vendor storno samples send', function () {
+    foreach ([
+        'StornaSmetka'                    => [[SMOKI], 10],
+        'StornaSmetkaMKProizvod'          => [[JOGURT], 10],
+        'StornaSmetkaMK_I_NeMK_Proizvodi' => [[SMOKI, JOGURT], 20],
+    ] as $name => [$items, $total]) {
+        $base = till();
+        driver('fp700', $base)->storno($items, [['amount' => $total, 'cash' => true]]);
+        $sent = sent($base, 'fp700');
+
+        // One line differs on purpose: the samples pay with a bare "5\t",
+        // the whole total in cash, where the driver states mode and amount
+        // as its sale receipts do (FiskalnaSmetka_PlakanjeSoKarticaIKesh).
+        $expected = withoutSequence(sample("accent/fp700/StorniSmetki/{$name}/PF500.IN"));
+        $payment  = array_search("5\t", $expected, true);
+
+        check($payment !== false, "{$name} has no bare payment line any more");
+        $expected[$payment] = "5\tP" . number_format($total, 2, '.', '');
+
+        same($expected, withoutSequence($sent), $name);
+        same(range(41, 40 + count(sequence($sent))), sequence($sent), "{$name}: sequence bytes");
+    }
+});
+
+test('fp700: a storno is a sale opened with 85 and closed with 86, as in the samples', function () {
+    foreach ([
+        'FiskalnaSmetka'                    => 'StornaSmetka',
+        'FiskalnaSmetkaMKProizvod'          => 'StornaSmetkaMKProizvod',
+        'FiskalnaSmetkaMK_I_NeMK_Proizvodi' => 'StornaSmetkaMK_I_NeMK_Proizvodi',
+    ] as $sale => $storno) {
+        same(
+            sample("accent/fp700/StorniSmetki/{$storno}/PF500.IN"),
+            fp700Storno(sample("accent/fp700/FiskalniSmetki/{$sale}/PF500.IN")),
+            "the vendor's {$sale} → {$storno}"
+        );
+    }
+
+    $sale = till();
+    driver('fp700', $sale)->fiscal(ITEMS, PAYMENTS);
+    $storno = till();
+    driver('fp700', $storno)->storno(ITEMS, PAYMENTS);
+
+    same(fp700Storno(sent($sale, 'fp700')), sent($storno, 'fp700'), 'the driver');
+});
+
+test('sy250: storno sends what the vendor storno sample with payment types sends', function () {
+    $base = till();
+    driver('sy250', $base)->storno(SY250_SAMPLE_ITEMS, [['amount' => 30, 'cash' => true], ['amount' => 30, 'cash' => false]]);
+    $sent = sent($base, 'sy250');
+
+    // The sample also pays 20.00 on credit (type 2), which the API has no way
+    // to ask for; every other line has to match.
+    $expected = withoutSequence(sample('accent/sy250/StorniSmetki/StornaSmetka_TipoviPlakanja/PF500.IN'));
+    $credit   = array_search("52\t20.00\t", $expected, true);
+
+    check($credit !== false, 'the sample has no credit payment any more');
+    array_splice($expected, $credit, 1);
+
+    same($expected, withoutSequence($sent));
+    same(range(41, 40 + count(sequence($sent))), sequence($sent), 'sequence bytes');
+});
+
+test('sy250: a storno is a sale with Storno = 1 in the open command, as in the samples', function () {
+    foreach (['FiskalnaSmetka' => 'StornaSmetka', 'FiskalnaSmetka_TipoviPlakanja' => 'StornaSmetka_TipoviPlakanja'] as $sale => $storno) {
+        same(
+            sample("accent/sy250/StorniSmetki/{$storno}/PF500.IN"),
+            sy250Storno(sample("accent/sy250/FiskalniSmetki/{$sale}/PF500.IN")),
+            "the vendor's {$sale} → {$storno}"
+        );
+    }
+
+    $sale = till();
+    driver('sy250', $sale)->fiscal(ITEMS, PAYMENTS);
+    $storno = till();
+    driver('sy250', $storno)->storno(ITEMS, PAYMENTS);
+
+    same(sy250Storno(sent($sale, 'sy250')), sent($storno, 'sy250'), 'the driver');
+});
+
+test('severec: storno opens the receipt the way STORNO.bat does', function () {
+    // artikliREF.in, which STORNO.bat runs, opens with artikli.in's open
+    // command (SMETKA.bat) plus ",R". Its other lines are sale commands in
+    // the vendor's shorter formatting, and display text fiscal() never sends.
+    $sale   = withoutSequence(sample('severec/artikli.in'));
+    $storno = withoutSequence(sample('severec/artikliREF.in'));
+    same($storno[0], $sale[0] . ',R', "the vendor's open commands");
+
+    $base = till();
+    driver('severec', $base)->storno(
+        [['name' => 'леб', 'vat' => 'B', 'price' => 20, 'quantity' => 1], ['name' => 'леб', 'vat' => 'B', 'price' => 25, 'quantity' => 1]],
+        [['amount' => 45, 'cash' => true]]
+    );
+    $sent = sent($base, 'severec');
+
+    same([$storno[0], cp1251("1ЛЕБ\tB20.00*1.000"), cp1251("1ЛЕБ\tB25.00*1.000"), "5\tC45.00", '8', ''], withoutSequence($sent));
+    same(range(41, 45), sequence($sent), 'sequence bytes');
+
+    $sale = till();
+    driver('severec', $sale)->fiscal(ITEMS, PAYMENTS);
+    $storno = till();
+    driver('severec', $storno)->storno(ITEMS, PAYMENTS);
+
+    same(severecStorno(sent($sale, 'severec')), sent($storno, 'severec'), 'the driver: a sale with ",R" on the open command');
+});
+
+test('razvigorec: storno sends what Storna.txt sends', function () {
+    $base = till();
+    driver('razvigorec', $base)->storno(
+        [['name' => 'Чланарина', 'vat' => 'A', 'price' => 3000, 'quantity' => 1], ['name' => 'Гаранција', 'vat' => 'A', 'price' => 2000, 'quantity' => 1]],
+        [['amount' => 5000, 'cash' => true]]
+    );
+
+    // The sample spells the names as typed; every driver upper-cases them.
+    $expected = cp1251(mb_strtoupper(mb_convert_encoding(sample('razvigorec/Primeri na smetki/Storna.txt'), 'UTF-8', 'Windows-1251'), 'UTF-8'));
+
+    same($expected, sent($base, 'razvigorec'));
+
+    $sale = till();
+    driver('razvigorec', $sale)->fiscal(ITEMS, PAYMENTS);
+    $storno = till();
+    driver('razvigorec', $storno)->storno(ITEMS, PAYMENTS);
+
+    same(razvigorecStorno(sent($sale, 'razvigorec')), sent($storno, 'razvigorec'), 'the driver: a sale opened with #S');
+});
+
+test('storno reports its receipt number the way fiscal does', function () {
+    $base = till();
+    scenario($base, 'sy250', ['replies' => SY250_REPLIES]);
+    same(['receipt_number' => '1635', 'fiscal_memory_serial' => null], driver('sy250', $base)->storno(ITEMS, PAYMENTS)->toArray(), 'sy250');
+
+    $base = till();
+    same(['receipt_number' => null, 'fiscal_memory_serial' => null], driver('fp700', $base)->storno(ITEMS, PAYMENTS)->toArray(), 'fp700');
+
+    foreach (['severec', 'razvigorec'] as $name) {
+        $base = till();
+        same(['receipt_number' => '42', 'fiscal_memory_serial' => 'DU330999004'], driver($name, $base)->storno(ITEMS, PAYMENTS)->toArray(), $name);
+    }
+});
+
+test('storno fails on the same evidence fiscal does', function () {
+    $base = till();
+    scenario($base, 'sy250', ['replies' => ['1' => "F\t-1004\tBad input\t"]]);
+    throwsLike(\RuntimeException::class, 'rejected command 2 of 8', fn() => driver('sy250', $base)->storno(ITEMS, PAYMENTS));
+
+    $base = till();
+    scenario($base, 'fp700', ['outcomes' => ['V' => '2, TIMEOUT_READING']]);
+    throwsLike(\RuntimeException::class, 'TIMEOUT_READING', fn() => driver('fp700', $base)->storno(ITEMS, PAYMENTS));
+
+    $base = till();
+    scenario($base, 'sy250', ['console' => "Invalid xml setting - \"port\"\r\n"]);
+    throwsLike(\RuntimeException::class, 'ecrprint reported: Invalid xml setting', fn() => driver('sy250', $base)->storno(ITEMS, PAYMENTS));
+
+    foreach (['severec', 'razvigorec'] as $name) {
+        $base = till();
+        scenario($base, $name, ['result' => "Команда: x.in\r\nERROR: Сторно не е дозволено\r\n"]);
+        throwsLike(\RuntimeException::class, 'ERROR: Сторно не е дозволено', fn() => driver($name, $base)->storno(ITEMS, PAYMENTS));
+
+        $base = till();
+        scenario($base, $name, ['result' => null, 'error_log' => 'Modul: Printer / Metod: Storno / Line: 7']);
+        throwsLike(\RuntimeException::class, 'wrote to its error log', fn() => driver($name, $base)->storno(ITEMS, PAYMENTS));
+    }
+});
+
+test('http: storno takes the fiscal body, validates it the same way and answers the same way', function () {
+    $base = till();
+    $port = serve($base);
+
+    $response = request($port, '/index.php?q=storno&driver=razvigorec', ['items' => ITEMS, 'payments' => PAYMENTS]);
+
+    same(200, $response['status'], 'status');
+    same('application/json; charset=utf-8', $response['headers']['content-type'] ?? null, 'Content-Type');
+    same('razvigorec', $response['headers']['x-fiscal-driver'] ?? null, 'X-Fiscal-Driver');
+    same('{"receipt_number":"42","fiscal_memory_serial":"DU330999004"}', $response['body'], 'body');
+    same("#S\r\n", substr(sent($base, 'razvigorec'), 0, 4), 'what was sent');
+
+    foreach ([
+        'no payments'  => ['items' => ITEMS],
+        'no items'     => ['payments' => PAYMENTS],
+        'empty items'  => ['items' => [], 'payments' => PAYMENTS],
+        'no body'      => null,
+    ] as $case => $body) {
+        $response = request($port, '/index.php?q=storno&driver=sy250', $body);
+        same([400, '{"error":"items and payments are required"}'], [$response['status'], $response['body']], $case);
+    }
+
+    $response = request($port, '/index.php?q=storno&driver=sy250', ['items' => [['name' => 'X', 'vat' => 'Q', 'price' => 1]], 'payments' => PAYMENTS]);
+    same([400, '{"error":"Invalid VAT code: Q"}'], [$response['status'], $response['body']], 'a bad VAT code');
+
+    same(1, count(runs($base, 'razvigorec')) + count(runs($base, 'sy250')), 'executable runs');
+});
+
+// ---------------------------------------------------------------------------
 // q=ping
 // ---------------------------------------------------------------------------
 

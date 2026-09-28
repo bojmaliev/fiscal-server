@@ -15,6 +15,19 @@ interface PrinterDriver
      */
     public function fiscal(array $items, array $payments): ReceiptResult;
 
+    /**
+     * Print a storno (refund) receipt: the items are handed back and the
+     * payments paid out. Same arguments and result as fiscal().
+     *
+     * Each driver sends its fiscal() batch changed only where its vendor's
+     * storno sample differs from the matching sale sample. A driver whose
+     * vendor documents no storno format has to throw a RuntimeException
+     * ("storno is not supported by the <name> driver") rather than improvise
+     * one: this prints into fiscal memory, where a wrong command does more
+     * harm than a refusal.
+     */
+    public function storno(array $items, array $payments): ReceiptResult;
+
     /** Print Z-report and close the fiscal day. */
     public function closeDayReport(): void;
 

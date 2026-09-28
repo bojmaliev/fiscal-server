@@ -88,17 +88,18 @@ class RazvigorecDriver implements PrinterDriver
 
     public function fiscal(array $items, array $payments): ReceiptResult
     {
-        $lines = ['#F'];
+        return $this->receipt('#F', $items, $payments);
+    }
 
-        foreach ($items as $item) {
-            $lines[] = $this->itemLine($item);
-        }
-
-        $lines[] = $this->paymentLine($payments);
-
-        $this->execute(implode("\r\n", $lines) . "\r\n");
-
-        return $this->receiptFromResult();
+    /**
+     * Storno (refund) receipt: "#S - Storno smetka" in
+     * docs/razvigorec/Komandi.txt, and "Primeri na smetki/Storna.txt" is #S
+     * followed by item and payment lines in the format a sale uses. So this is
+     * fiscal() opened with #S instead of #F.
+     */
+    public function storno(array $items, array $payments): ReceiptResult
+    {
+        return $this->receipt('#S', $items, $payments);
     }
 
     public function closeDayReport(): void
@@ -126,6 +127,26 @@ class RazvigorecDriver implements PrinterDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Prints one receipt: the open line, one line per item, one payment line.
+     *
+     * @param string $open '#F' for a sale, '#S' for a storno.
+     */
+    private function receipt(string $open, array $items, array $payments): ReceiptResult
+    {
+        $lines = [$open];
+
+        foreach ($items as $item) {
+            $lines[] = $this->itemLine($item);
+        }
+
+        $lines[] = $this->paymentLine($payments);
+
+        $this->execute(implode("\r\n", $lines) . "\r\n");
+
+        return $this->receiptFromResult();
+    }
 
     private function itemLine(array $item): string
     {

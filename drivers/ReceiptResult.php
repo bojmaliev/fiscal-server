@@ -2,7 +2,7 @@
 
 /**
  * What the vendor tooling reported about a receipt it has just printed — the
- * body q=fiscal answers with.
+ * body q=fiscal and q=storno answer with.
  *
  * Both fields are best-effort. By the time anyone looks, the paper is already
  * out, so an answer that cannot be read has to come back as "unknown" rather

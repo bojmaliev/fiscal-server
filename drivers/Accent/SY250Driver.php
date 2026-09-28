@@ -13,9 +13,9 @@
  *
  * SeqByte cycles 33–255 then wraps to 32, persisted in seq.txt.
  * CmdChar is the ASCII character whose ordinal matches the SY250 command number:
- *   '0'=48 open receipt,  '1'=49 register item,  '5'=53 payment,
- *   '8'=56 close receipt, 'E'=69 Z/X-report,     'F'=70 deposit/withdraw,
- *   '^'=94 period report.
+ *   '0'=48 open receipt (sale or storno),  '1'=49 register item,
+ *   '5'=53 payment,  '8'=56 close receipt, 'E'=69 Z/X-report,
+ *   'F'=70 deposit/withdraw,  '^'=94 period report.
  */
 class SY250Driver extends EcrPrintDriver
 {
@@ -42,23 +42,22 @@ class SY250Driver extends EcrPrintDriver
 
     public function fiscal(array $items, array $payments): ReceiptResult
     {
-        $commands = [
-            // Open fiscal receipt: opCode, opPwd, '', receiptType=0
-            $this->cmd('0', $this->opCode, $this->opPwd, '', '0'),
+        return $this->receipt('0', $items, $payments);
+    }
 
-            // Register each item
-            ...array_map(fn(array $item) => $this->itemCmd($item), $items),
-
-            // Process payments: '0'=cash, '1'=card, '2'=credit
-            ...array_map(fn(array $payment) => $this->paymentCmd($payment), $payments),
-
-            // Close fiscal receipt
-            $this->cmd('8'),
-        ];
-
-        $this->execute(implode(self::CRLF, $commands) . self::CRLF);
-
-        return $this->slipNumber(count($commands) - 1);
+    /**
+     * Storno (refund) receipt.
+     *
+     * Command 48 takes a Storno parameter — "When '1' open storno receipt.
+     * Default: '0'" (docs/accent/sy250/Control_codes_cash_register-v2.md) —
+     * and each storno sample in docs/accent/sy250/StorniSmetki is its
+     * FiskalniSmetki twin with that one byte changed. So this is fiscal() with
+     * Storno = '1' and nothing else. StornaSmetka_TipoviPlakanja shows a
+     * storno paid with the same cash and card lines fiscal() sends.
+     */
+    public function storno(array $items, array $payments): ReceiptResult
+    {
+        return $this->receipt('1', $items, $payments);
     }
 
     public function closeDayReport(): void
@@ -89,6 +88,32 @@ class SY250Driver extends EcrPrintDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Prints one receipt: open, items, payments, close.
+     *
+     * @param string $storno Command 48's Storno parameter: '0' sale, '1' storno.
+     */
+    private function receipt(string $storno, array $items, array $payments): ReceiptResult
+    {
+        $commands = [
+            // Open fiscal receipt: opCode, opPwd, TillNmb (ignored), Storno
+            $this->cmd('0', $this->opCode, $this->opPwd, '', $storno),
+
+            // Register each item
+            ...array_map(fn(array $item) => $this->itemCmd($item), $items),
+
+            // Process payments: '0'=cash, '1'=card, '2'=credit
+            ...array_map(fn(array $payment) => $this->paymentCmd($payment), $payments),
+
+            // Close fiscal receipt
+            $this->cmd('8'),
+        ];
+
+        $this->execute(implode(self::CRLF, $commands) . self::CRLF);
+
+        return $this->slipNumber(count($commands) - 1);
+    }
 
     /**
      * The number the printer gave the receipt it has just closed.

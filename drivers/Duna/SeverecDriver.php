@@ -12,7 +12,7 @@
  * SeqByte cycles 33–255 then wraps to 32, persisted in severec_seq.txt.
  *
  * Key commands:
- *   '0'  open receipt:    {seq}0{opCode},{opPwd},{receiptType}
+ *   '0'  open receipt:    {seq}0{opCode},{opPwd},{receiptType}[,R for a storno]
  *   '1'  register item:   {seq}1{name}\t{vat}{price}*{qty}
  *   '5'  payment:         {seq}5\t{mode}{amount}   (C=cash, D=card)
  *   '8'  close receipt:   {seq}8
@@ -86,23 +86,28 @@ class SeverecDriver extends EcrPrintDriver
 
     public function fiscal(array $items, array $payments): ReceiptResult
     {
-        $commands = [
-            // Open receipt: opCode,opPwd,receiptType (comma-separated)
-            $this->cmd('0', "{$this->opCode},{$this->opPwd},1"),
+        return $this->receipt('', $items, $payments);
+    }
 
-            // Register each item
-            ...array_map(fn(array $item) => $this->itemCmd($item), $items),
-
-            // Payments
-            ...array_map(fn(array $payment) => $this->paymentCmd($payment), $payments),
-
-            // Close receipt
-            $this->cmd('8'),
-        ];
-
-        $this->execute(implode(self::CRLF, $commands) . self::CRLF);
-
-        return $this->receiptFromResult();
+    /**
+     * Storno (refund) receipt, printed the way docs/severec/STORNO.bat prints
+     * one.
+     *
+     * STORNO.bat runs artikliREF.in, whose open command is the one in
+     * SMETKA.bat's artikli.in with ",R" appended; the item, payment and close
+     * commands after it are the ones a sale uses. That suffix is the only
+     * storno-specific part, so this is fiscal() with it and nothing else.
+     *
+     * Both samples also carry " #…" lines that look like customer-display
+     * text — one reads ВКУПНО: in the DOS code page, just before the 45 total.
+     * fiscal() has never sent those, and neither does this. The sample pays
+     * with a bare "5\t", settling the whole total in cash; the payment lines
+     * here state each payment's mode and amount as fiscal()'s do, so that a
+     * card refund is recorded as card.
+     */
+    public function storno(array $items, array $payments): ReceiptResult
+    {
+        return $this->receipt(',R', $items, $payments);
     }
 
     public function closeDayReport(): void
@@ -142,6 +147,34 @@ class SeverecDriver extends EcrPrintDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Prints one receipt: open, items, payments, close.
+     *
+     * @param string $openSuffix Appended to the open command: '' for a sale,
+     *                           ',R' for a storno.
+     */
+    private function receipt(string $openSuffix, array $items, array $payments): ReceiptResult
+    {
+        $commands = [
+            // Open receipt: opCode,opPwd,receiptType (comma-separated), then
+            // ",R" for a storno
+            $this->cmd('0', "{$this->opCode},{$this->opPwd},1{$openSuffix}"),
+
+            // Register each item
+            ...array_map(fn(array $item) => $this->itemCmd($item), $items),
+
+            // Payments
+            ...array_map(fn(array $payment) => $this->paymentCmd($payment), $payments),
+
+            // Close receipt
+            $this->cmd('8'),
+        ];
+
+        $this->execute(implode(self::CRLF, $commands) . self::CRLF);
+
+        return $this->receiptFromResult();
+    }
 
     private function itemCmd(array $item): string
     {

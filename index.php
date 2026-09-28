@@ -152,15 +152,17 @@ function handlePing(): array
 
 function handleFiscal(PrinterDriver $driver): ReceiptResult
 {
-    $input    = jsonInput();
-    $items    = $input['items']    ?? [];
-    $payments = $input['payments'] ?? [];
-
-    if (empty($items) || empty($payments)) {
-        throw new \InvalidArgumentException('items and payments are required');
-    }
+    [$items, $payments] = receiptInput();
 
     return $driver->fiscal($items, $payments);
+}
+
+/** A storno (refund) receipt takes the q=fiscal body, validated the same way. */
+function handleStorno(PrinterDriver $driver): ReceiptResult
+{
+    [$items, $payments] = receiptInput();
+
+    return $driver->storno($items, $payments);
 }
 
 function handleDepositWithdrawMoney(PrinterDriver $driver): void
@@ -190,6 +192,26 @@ function jsonInput(): array
     }
 
     return $input;
+}
+
+/**
+ * The items and payments of a q=fiscal or q=storno body.
+ *
+ * @return array{0: array, 1: array} [items, payments]
+ *
+ * @throws \InvalidArgumentException when either is missing or empty.
+ */
+function receiptInput(): array
+{
+    $input    = jsonInput();
+    $items    = $input['items']    ?? [];
+    $payments = $input['payments'] ?? [];
+
+    if (empty($items) || empty($payments)) {
+        throw new \InvalidArgumentException('items and payments are required');
+    }
+
+    return [$items, $payments];
 }
 
 /**
@@ -255,6 +277,7 @@ try {
         'deposit-withdraw-money' => handleDepositWithdrawMoney($driver),
         'period-short-report'    => handlePeriodShortReport($driver),
         'fiscal'                 => $receipt = handleFiscal($driver),
+        'storno'                 => $receipt = handleStorno($driver),
         default                  => throw new \InvalidArgumentException("Unknown route: {$_GET['q']}"),
     };
 
