@@ -331,3 +331,19 @@ Both Duna executables also read two extra keys from `FISKAL.INI` that are not
 exposed through the API: `BEZFISKALNA` (non-fiscal test receipts — useful for
 testing without consuming fiscal memory) and `LOGPRINTER` (dumps serial traffic
 to `Log\Printer\`).
+
+### Tests
+
+```
+php tests/run.php          # everything
+php tests/run.php sy250    # only the tests whose name contains "sy250"
+```
+
+Needs PHP 8 on macOS or Linux, nothing else. Each test drives a driver end to
+end against a scratch copy of `bin/` in which the three vendor executables are
+replaced by the fakes in [tests/fakes](tests/fakes) — PHP scripts started
+through their `#!/usr/bin/env php` line, which is why Windows is out — that
+record the command file they were given and leave behind the result files the
+real ones would. The checkout's own `bin/` is never touched. The suite pins
+the exact bytes `q=fiscal` sends on every driver, so a change to a sale receipt
+cannot go unnoticed.
