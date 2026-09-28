@@ -20,7 +20,7 @@ POS / web app  ──HTTP──▶  fiscal-server (PHP)  ──file + exec──
 
 The operation is selected with the **`q`** query parameter. Endpoints that need
 data take a JSON body; the request method is not enforced, so `GET` works for
-the two report endpoints that take no input.
+`q=ping` and the two report endpoints that take no input.
 
 ```
 POST /index.php?q=fiscal
@@ -61,12 +61,35 @@ depending on the driver) — see
 > `9600` and `sy250` writes `115200` on every run. Send an explicit `speed` to
 > override either.
 
-Defaults live in [index.php](index.php#L34-L37) as `PRINTER_DRIVER`,
+Defaults live in [index.php](index.php#L41-L44) as `PRINTER_DRIVER`,
 `PRINTER_PORT` and `PRINTER_SPEED`.
 
 ---
 
 ## Endpoints
+
+### `q=ping` — health check
+
+```bash
+curl 'http://localhost:8000/index.php?q=ping&driver=severec&port=COM4'
+```
+
+```json
+{ "ok": true, "service": "fiscal-server", "version": "1.1.0", "driver": "severec" }
+```
+
+Never goes near the printer: no driver is constructed, so no vendor config
+file is read or rewritten, and no vendor executable runs. `driver`, `port` and
+`speed` are still validated exactly as on the printing routes, with the same
+`400`s, so a client can check its settings before relying on them.
+
+- `service` is always `fiscal-server` — proof the client reached this server
+  and not some other program listening on the port.
+- `version` is `VERSION` in [index.php](index.php).
+- `driver` is the resolved driver name, also sent as `X-Fiscal-Driver`.
+
+A `200` says nothing about the printer itself — whether one is attached,
+switched on, or on that port.
 
 ### `q=fiscal` — print a fiscal receipt
 
@@ -151,6 +174,7 @@ or impossible date.
 | Status | Body | Meaning |
 |---|---|---|
 | `200` | *empty* | The command was sent and no failure was detected |
+| `200` | JSON | `q=ping` only — see [above](#qping--health-check) |
 | `400` | `{"error": "..."}` | Bad request — your input |
 | `500` | `{"error": "..."}` | The printer or vendor executable failed |
 
@@ -216,6 +240,7 @@ out". Treat `500` as authoritative and `200` as optimistic.
 
 | | `fp700` | `sy250` | `severec` | `razvigorec` |
 |---|---|---|---|---|
+| `q=ping` | ✅ | ✅ | ✅ | ✅ |
 | `q=fiscal` | ✅ | ✅ | ✅ | ✅ (whole denari) |
 | `q=close-day-report` | ✅ | ✅ | ✅ | ✅ |
 | `q=control-report` | ✅ | ✅ | ✅ | ✅ |

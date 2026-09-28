@@ -40,18 +40,28 @@ class RazvigorecDriver implements PrinterDriver
     }
 
     /**
-     * Points Razvigorec.ini at a COM port chosen by the caller.
+     * Razvigorec.exe exposes no baud-rate setting, so a speed is rejected
+     * rather than silently dropped.
      *
-     * Razvigorec.ini is not a keyed INI: the port is simply the first line
-     * ("COM1" as shipped). Any further lines are preserved. Razvigorec.exe
-     * exposes no baud-rate setting, so a speed is rejected rather than
-     * silently dropped.
+     * Static so that a request can be checked without constructing the
+     * driver, which rewrites Razvigorec.ini — q=ping validates this way.
      */
-    private function applySerialSettings(?string $port, ?string $speed): void
+    public static function rejectSpeed(?string $speed): void
     {
         if ($speed !== null) {
             throw new \InvalidArgumentException('The Razvigorec driver has no speed setting; omit "speed".');
         }
+    }
+
+    /**
+     * Points Razvigorec.ini at a COM port chosen by the caller.
+     *
+     * Razvigorec.ini is not a keyed INI: the port is simply the first line
+     * ("COM1" as shipped). Any further lines are preserved.
+     */
+    private function applySerialSettings(?string $port, ?string $speed): void
+    {
+        self::rejectSpeed($speed);
 
         if ($port === null) {
             return;

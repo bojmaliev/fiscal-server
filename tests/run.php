@@ -162,6 +162,18 @@ function removeTree(string $path): void
     @rmdir($path);
 }
 
+function copyTree(string $from, string $to): void
+{
+    @mkdir($to, 0777, true);
+
+    foreach (array_diff((array) scandir($from), ['.', '..']) as $entry) {
+        $source = $from . DIRECTORY_SEPARATOR . $entry;
+        $target = $to . DIRECTORY_SEPARATOR . $entry;
+
+        is_dir($source) ? copyTree($source, $target) : copy($source, $target);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scratch tills
 // ---------------------------------------------------------------------------
@@ -248,6 +260,131 @@ function sent(string $base, string $driver): string
     same(1, count($runs), "runs of the {$driver} executable");
 
     return $runs[0]['input'];
+}
+
+/**
+ * Every file and directory under $dir with its permissions, size, content
+ * hash and modification time — enough to tell whether anything was created,
+ * removed, rewritten or chmod-ed.
+ *
+ * @return array<string, string>
+ */
+function snapshot(string $dir): array
+{
+    $entries = [];
+
+    $iterator = new \RecursiveIteratorIterator(
+        new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+        \RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $path => $info) {
+        $entries[substr($path, strlen($dir))] = $info->isDir()
+            ? sprintf('dir %o', $info->getPerms() & 0777)
+            : sprintf('%o %d %s %d', $info->getPerms() & 0777, $info->getSize(), sha1_file($path), $info->getMTime());
+    }
+
+    ksort($entries);
+
+    return $entries;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP: index.php, served the way serve.bat serves it
+// ---------------------------------------------------------------------------
+
+/** @var resource[] Built-in servers, stopped when the run ends. */
+$servers = [];
+
+/**
+ * Copies index.php and drivers/ into a scratch till and serves it with PHP's
+ * built-in server, as serve.bat serves the real one. PRINTER_BASE_PATH is
+ * index.php's own directory, so every request works on the scratch bin/.
+ * The server's log goes next to the till rather than into it, so that a
+ * snapshot of the till sees only what the request did.
+ *
+ * @return int The port it listens on.
+ */
+function serve(string $base): int
+{
+    copy(ROOT . '/index.php', "{$base}/index.php");
+    copyTree(ROOT . '/drivers', "{$base}/drivers");
+
+    $socket = stream_socket_server('tcp://127.0.0.1:0');
+    $name   = stream_socket_get_name($socket, false);
+    $port   = (int) substr($name, strrpos($name, ':') + 1);
+    fclose($socket);
+
+    $log = "{$base}.server.log";
+    $GLOBALS['scratch'][] = $log;
+    $GLOBALS['servers'][] = proc_open(
+        [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', $base],
+        [0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']],
+        $pipes,
+        $base
+    );
+
+    for ($attempt = 0; $attempt < 100; $attempt++) {
+        $probe = @fsockopen('127.0.0.1', $port, $errno, $error, 0.1);
+
+        if ($probe !== false) {
+            fclose($probe);
+
+            return $port;
+        }
+
+        usleep(50000);
+    }
+
+    throw new Failure("the built-in server did not come up on port {$port}");
+}
+
+/**
+ * Sends one request, as HTTP/1.0 so the server closes the connection when it
+ * is done and the body needs no de-chunking. A JSON body makes it a POST.
+ *
+ * @return array{status: int, headers: array<string, string>, body: string}
+ */
+function request(int $port, string $target, ?array $json = null): array
+{
+    $socket = fsockopen('127.0.0.1', $port, $errno, $error, 5);
+
+    if ($socket === false) {
+        throw new Failure("cannot connect to port {$port}: {$error}");
+    }
+
+    stream_set_timeout($socket, 30);
+
+    $payload = $json === null ? '' : json_encode($json, JSON_UNESCAPED_UNICODE);
+    $head    = ($json === null ? 'GET' : 'POST') . " {$target} HTTP/1.0\r\nHost: 127.0.0.1\r\n";
+
+    if ($json !== null) {
+        $head .= "Content-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\n";
+    }
+
+    fwrite($socket, $head . "\r\n" . $payload);
+    $response = (string) stream_get_contents($socket);
+    fclose($socket);
+
+    [$rawHead, $body] = array_pad(explode("\r\n\r\n", $response, 2), 2, '');
+    $lines   = explode("\r\n", $rawHead);
+    $status  = preg_match('#^HTTP/\S+ (\d{3})#', (string) array_shift($lines), $m) ? (int) $m[1] : 0;
+    $headers = [];
+
+    foreach ($lines as $line) {
+        [$field, $value] = array_pad(explode(':', $line, 2), 2, '');
+        $headers[strtolower(trim($field))] = trim($value);
+    }
+
+    return ['status' => $status, 'headers' => $headers, 'body' => $body];
+}
+
+/** The VERSION index.php declares. */
+function indexVersion(): string
+{
+    return preg_match("/^const VERSION\s*=\s*'([^']*)';/m", (string) file_get_contents(ROOT . '/index.php'), $m)
+        ? $m[1]
+        : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +495,96 @@ foreach (['severec', 'razvigorec'] as $name) {
 }
 
 // ---------------------------------------------------------------------------
+// q=ping
+// ---------------------------------------------------------------------------
+
+test('ping: answers without touching a file or running an executable', function () {
+    $base    = till();
+    $port    = serve($base);
+    $version = indexVersion();
+
+    check(preg_match('/^\d+\.\d+\.\d+$/', $version) === 1, 'index.php declares no VERSION like 1.2.3: ' . show($version));
+
+    $before = snapshot($base);
+
+    // Constructing a driver reads its vendor config file and, given a port,
+    // rewrites it; printing runs the executable. With all six locked away, a
+    // ping that did either would come back 500 instead of 200.
+    $locked = [];
+
+    foreach ([
+        'accent/ecrprint.xml',
+        'accent/ecrprint.exe',
+        'severec/FISKAL.INI',
+        'severec/Severec.exe',
+        'razvigorec/Razvigorec.ini',
+        'razvigorec/Razvigorec.exe',
+    ] as $file) {
+        $path = "{$base}/bin/{$file}";
+
+        check(is_file($path) && !is_link($path), "{$file} is not a plain file");
+        $locked[$path] = fileperms($path) & 0777;
+        chmod($path, 0);
+    }
+
+    try {
+        foreach ([
+            '/index.php?q=ping'                                    => 'fp700',
+            '/index.php?q=ping&driver=sy250&port=COM7&speed=19200' => 'sy250',
+            '/index.php?q=ping&driver=SEVEREC&port=com4&speed=5'   => 'severec',
+            '/index.php?q=ping&driver=razvigorec&port=COM5'        => 'razvigorec',
+        ] as $target => $driver) {
+            $response = request($port, $target);
+
+            same(200, $response['status'], "status of {$target}");
+            same('application/json; charset=utf-8', $response['headers']['content-type'] ?? null, "Content-Type of {$target}");
+            same($driver, $response['headers']['x-fiscal-driver'] ?? null, "X-Fiscal-Driver of {$target}");
+            same(
+                ['ok' => true, 'service' => 'fiscal-server', 'version' => $version, 'driver' => $driver],
+                json_decode($response['body'], true),
+                "body of {$target}"
+            );
+        }
+    } finally {
+        foreach ($locked as $path => $mode) {
+            chmod($path, $mode);
+        }
+    }
+
+    same($before, snapshot($base), 'the till after four pings');
+});
+
+test('ping: refuses exactly what the printing routes refuse', function () {
+    $base = till();
+    $port = serve($base);
+
+    foreach ([
+        'driver=bogus'                 => 'Unknown printer driver: bogus',
+        'port=LPT1'                    => 'Invalid port. Expected COM1 to COM999.',
+        'port=COM1000'                 => 'Invalid port. Expected COM1 to COM999.',
+        'speed=fast'                   => 'Invalid speed. Expected digits only.',
+        'driver=razvigorec&speed=9600' => 'The Razvigorec driver has no speed setting; omit "speed".',
+    ] as $query => $error) {
+        foreach (['ping', 'control-report'] as $route) {
+            $response = request($port, "/index.php?q={$route}&{$query}");
+
+            same(400, $response['status'], "status of q={$route}&{$query}");
+            same(['error' => $error], json_decode($response['body'], true), "body of q={$route}&{$query}");
+        }
+    }
+
+    // As on every route, the settings may come in the JSON body instead, and
+    // the query string wins when both are given.
+    $response = request($port, '/index.php?q=ping', ['driver' => 'razvigorec', 'speed' => '9600']);
+    same(400, $response['status'], 'status with the settings in the body');
+
+    $response = request($port, '/index.php?q=ping&driver=severec', ['driver' => 'sy250']);
+    same('severec', json_decode($response['body'], true)['driver'] ?? null, 'driver named in both');
+
+    same([], array_merge(runs($base, 'fp700'), runs($base, 'severec'), runs($base, 'razvigorec')), 'executable runs');
+});
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
@@ -373,6 +600,11 @@ chmod($wrapper, 0755);
 putenv('PATH=' . $interpreter . PATH_SEPARATOR . getenv('PATH'));
 
 register_shutdown_function(static function (): void {
+    foreach ($GLOBALS['servers'] as $server) {
+        proc_terminate($server);
+        proc_close($server);
+    }
+
     foreach ($GLOBALS['scratch'] as $dir) {
         removeTree($dir);
     }
