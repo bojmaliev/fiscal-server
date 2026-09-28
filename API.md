@@ -20,7 +20,7 @@ POS / web app  ──HTTP──▶  fiscal-server (PHP)  ──file + exec──
 
 The operation is selected with the **`q`** query parameter. Endpoints that need
 data take a JSON body; the request method is not enforced, so `GET` works for
-the two report endpoints that take no input.
+`q=ping` and the two report endpoints that take no input.
 
 ```
 POST /index.php?q=fiscal
@@ -61,12 +61,35 @@ depending on the driver) — see
 > `9600` and `sy250` writes `115200` on every run. Send an explicit `speed` to
 > override either.
 
-Defaults live in [index.php](index.php#L34-L37) as `PRINTER_DRIVER`,
+Defaults live in [index.php](index.php#L42-L45) as `PRINTER_DRIVER`,
 `PRINTER_PORT` and `PRINTER_SPEED`.
 
 ---
 
 ## Endpoints
+
+### `q=ping` — health check
+
+```bash
+curl 'http://localhost:8000/index.php?q=ping&driver=severec&port=COM4'
+```
+
+```json
+{ "ok": true, "service": "fiscal-server", "version": "1.1.0", "driver": "severec" }
+```
+
+Never goes near the printer: no driver is constructed, so no vendor config
+file is read or rewritten, and no vendor executable runs. `driver`, `port` and
+`speed` are still validated exactly as on the printing routes, with the same
+`400`s, so a client can check its settings before relying on them.
+
+- `service` is always `fiscal-server` — proof the client reached this server
+  and not some other program listening on the port.
+- `version` is `VERSION` in [index.php](index.php).
+- `driver` is the resolved driver name, also sent as `X-Fiscal-Driver`.
+
+A `200` says nothing about the printer itself — whether one is attached,
+switched on, or on that port.
 
 ### `q=fiscal` — print a fiscal receipt
 
@@ -110,6 +133,55 @@ curl -X POST 'http://localhost:8000/index.php?q=fiscal&port=COM4' \
        "payments":[{"amount":10,"cash":true}]}'
 ```
 
+Answers `200` with the number the receipt was given, where the driver can read
+it — see [Receipt number](#receipt-number):
+
+```json
+{ "receipt_number": "42", "fiscal_memory_serial": "DU330999004" }
+```
+
+### `q=storno` — print a storno (refund) receipt
+
+Takes the `q=fiscal` body, validated the same way — `items` and `payments`
+both required and non-empty, the same fields, the same `400`s — for the items
+being handed back and the money paid out for them. Answers like `q=fiscal`,
+with the [receipt number](#receipt-number) of the storno receipt.
+
+```bash
+curl -X POST 'http://localhost:8000/index.php?q=storno&driver=sy250&port=COM3' \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"name":"СМОКИ","vat":"A","price":10,"quantity":1}],
+       "payments":[{"amount":10,"cash":true}]}'
+```
+
+Each driver sends exactly the batch `q=fiscal` would, changed only where the
+vendor's own storno sample differs from a sale:
+
+| Driver | Change from a sale | Evidence in `docs/` |
+|---|---|---|
+| `fp700` | open command `0` (48) becomes `U` (85), close `8` (56) becomes `V` (86) | every sample in `accent/fp700/StorniSmetki` is its `FiskalniSmetki` twin with exactly those two bytes changed |
+| `sy250` | command 48's `Storno` parameter `0` becomes `1` | the SY command reference ("When '1' open storno receipt"), and every sample in `accent/sy250/StorniSmetki` is its `FiskalniSmetki` twin with exactly that byte changed |
+| `severec` | `,R` appended to the open command (`01,0001,1,R`) | `severec/STORNO.bat` runs `artikliREF.in`, whose open command is `artikli.in`'s (`SMETKA.bat`) plus `,R` |
+| `razvigorec` | `#S` in place of `#F` | `razvigorec/Komandi.txt` (`#S - Storno smetka`) and `Primeri na smetki/Storna.txt` |
+
+Two deliberate departures from the samples, both inherited from `q=fiscal`:
+
+- **Payment lines.** The `fp700` and `severec` storno samples pay with a bare
+  `5\t`, which settles the whole total in cash. The drivers send each
+  payment's mode and amount instead, exactly as their sale receipts do, so a
+  card refund is recorded as card. `sy250`'s `StornaSmetka_TipoviPlakanja`
+  shows those very cash and card lines inside a storno; the `fp700` and
+  `severec` samples show no storno paid any other way than in cash.
+- **`severec` display lines.** `artikliREF.in` also carries ` #…` lines that
+  look like customer-display text (one reads `ВКУПНО:` in the DOS code page,
+  just before the 45 total). `q=fiscal` has never sent their counterpart in
+  `artikli.in`, and `q=storno` does not either.
+
+The server does not tie a storno to the sale it reverses — none of the vendor
+samples carries a reference to one — nor check that the items were ever sold.
+Both are up to the caller. Every storno format above is unverified on real
+hardware; see [Not yet verified on a till](#not-yet-verified-on-a-till).
+
 ### `q=close-day-report` — Z report
 
 Closes the fiscal day and resets daily totals. No body.
@@ -150,7 +222,9 @@ or impossible date.
 
 | Status | Body | Meaning |
 |---|---|---|
-| `200` | *empty* | The command was sent and no failure was detected |
+| `200` | `{"receipt_number": …, "fiscal_memory_serial": …}` | `q=fiscal`, `q=storno`: the receipt was sent and no failure was detected — see [Receipt number](#receipt-number) |
+| `200` | *empty* | Every other printing route: the command was sent and no failure was detected |
+| `200` | `{"ok": true, …}` | `q=ping` — see [above](#qping--health-check) |
 | `400` | `{"error": "..."}` | Bad request — your input |
 | `500` | `{"error": "..."}` | The printer or vendor executable failed |
 
@@ -189,6 +263,64 @@ reporting a receipt that *did* print as failed would invite a duplicate fiscal
 receipt. So `200` means "no error was reported", not "paper definitely came
 out". Treat `500` as authoritative and `200` as optimistic.
 
+### Receipt number
+
+`q=fiscal` and `q=storno` answer `200` with two fields, each a string or
+`null`:
+
+```json
+{ "receipt_number": "1634", "fiscal_memory_serial": null }
+```
+
+Both are read from what the vendor tooling leaves behind once the receipt has
+printed, and each is `null` unless it came from output that is documented to
+carry it — nothing is inferred, so a number that might be the receipt's is
+never reported as the receipt's. Failing to read them never turns the response
+into an error: the paper is already out, and a printed receipt reported as
+failed invites a duplicate. So `null` means "unknown", not "not printed".
+
+| Driver | `receipt_number` | `fiscal_memory_serial` |
+|---|---|---|
+| `fp700` | always `null` | always `null` |
+| `sy250` | slip number from the close command's answer | always `null` |
+| `severec` | `Број на фискална сметка:` line of `Result.out` | `Сериски број на фискална меморија:` line of `Result.out` |
+| `razvigorec` | as `severec` | as `severec` |
+
+- **`sy250`** — `ecrprint.out` holds the printer's answer to each command. The
+  SY command reference,
+  [Control_codes_cash_register-v2.md](docs/accent/sy250/Control_codes_cash_register-v2.md),
+  documents the answer to command 56 (close receipt, `8`) as
+  `{ErrorStatus}<SEP>{SlipNumber}<SEP>`, the slip number being the "current
+  slip number (sales or storno)", and a live SY250 answered it `P\t1634`. It is
+  reported only when the verdict is `P` and the field is all digits. Command 48
+  (open receipt) answers the same field; only the close answer is used, being
+  the one given once the receipt is complete. No command in that reference
+  returns the fiscal memory serial.
+- **`fp700`** — nothing in `docs/accent` describes what this model answers. The
+  command reference there is the SY series' (tab-separated fields, `P`/`F`
+  verdicts), not the comma-separated dialect the FP700 speaks, and the FP700
+  samples are input only. Rather than guess, both fields stay `null`. Its
+  answers are still logged to `bin/accent/ecrprint.log` (see
+  [Knowing what was actually sent](#knowing-what-was-actually-sent)): a few
+  logged receipts from a real FP700, set against the paper, would show whether
+  any field is the receipt number.
+- **`severec`, `razvigorec`** — `Result.out` (Windows-1251) reads, on success:
+
+  ```
+  Команда: severec.in
+  Сериски број на фискална меморија: DU330999004
+  Број на фискална сметка: 42
+  ```
+
+  A field is `null` when its line is missing, appears twice with different
+  values, or holds anything but digits (receipt number) or a single word
+  (serial).
+
+For a storno, `sy250` reports the slip number its close answer carries, which
+the reference describes as covering "sales or storno"; `severec` and
+`razvigorec` report whatever `Result.out` states. Whether storno receipts are
+numbered in a sequence of their own has not been checked on any model.
+
 ### Common errors
 
 | Status | Message | Cause |
@@ -199,7 +331,7 @@ out". Treat `500` as authoritative and `200` as optimistic.
 | 400 | `Invalid port. Expected COM1 to COM999.` | bad `port` |
 | 400 | `Invalid speed. Expected digits only.` | non-numeric `speed` |
 | 400 | `The Razvigorec driver has no speed setting; omit "speed".` | `speed` + `razvigorec` |
-| 400 | `items and payments are required` | empty array on `q=fiscal` |
+| 400 | `items and payments are required` | missing or empty array on `q=fiscal` / `q=storno` |
 | 400 | `Invalid VAT code: X` | `vat` outside `A`/`B`/`V`/`G` |
 | 400 | `Invalid date. Expected YYYY-MM-DD format.` | bad `from`/`to` |
 | 500 | `ecrprint: the printer rejected command N of M (…) — …` | the Accent till refused that command, or never answered it |
@@ -216,11 +348,15 @@ out". Treat `500` as authoritative and `200` as optimistic.
 
 | | `fp700` | `sy250` | `severec` | `razvigorec` |
 |---|---|---|---|---|
+| `q=ping` | ✅ | ✅ | ✅ | ✅ |
 | `q=fiscal` | ✅ | ✅ | ✅ | ✅ (whole denari) |
+| `q=storno` | ⚠️ from samples, unverified | ⚠️ from samples, unverified | ⚠️ from samples, unverified | ⚠️ from samples, unverified (whole denari) |
 | `q=close-day-report` | ✅ | ✅ | ✅ | ✅ |
 | `q=control-report` | ✅ | ✅ | ✅ | ✅ |
 | `q=deposit-withdraw-money` | ✅ | ✅ | ✅ | ❌ `500` |
 | `q=period-short-report` | ✅ | ✅ | ✅ | ⚠️ date format unconfirmed |
+| `receipt_number` | `null` | ✅ close answer | ✅ `Result.out` | ✅ `Result.out` |
+| `fiscal_memory_serial` | `null` | `null` | ✅ `Result.out` | ✅ `Result.out` |
 | `mkd` item flag | ✅ | ✅ | ✅ | ignored |
 | `port` | ✅ | ✅ | ✅ | ✅ |
 | `speed` | ✅ baud (default 9600) | ✅ baud (default 115200) | ✅ vendor code | ❌ `400` |
@@ -306,7 +442,7 @@ otherwise two concurrent requests can interleave and print to the wrong port.
 | `razvigorec` | `bin/razvigorec/Result.out`, `bin/razvigorec/Log/Error/` |
 
 On success the Duna `Result.out` also carries the fiscal memory serial and the
-receipt number:
+receipt number, which is where `q=fiscal` and `q=storno` get them:
 
 ```
 Команда: severec.in
@@ -318,16 +454,54 @@ receipt number:
 Accent till abandons the rest of a batch once a command fails. **It only
 covers the link**, though: ecrprint stops on a non-`OK` `ecrprint.rs` entry
 and nothing else, so a command the printer answered and refused does not stop
-it. On `q=fiscal` that has teeth — a refused item line is passed over while
-the payment and close commands still run, which issues a real fiscal receipt
-with no items, a 0.00 total and the full tendered amount handed back as
+it. On `q=fiscal` and `q=storno` that has teeth — a refused item line is
+passed over while the payment and close commands still run, which issues a real
+receipt with no items, a 0.00 total and the full tendered amount handed back as
 change. The server detects that and returns 500, but the paper is already out.
 
 Avoiding it altogether means not sending the payment and close commands until
-the items are known to have registered, i.e. splitting `fiscal()` across two
-ecrprint runs instead of one.
+the items are known to have registered, i.e. splitting `fiscal()` and
+`storno()` across two ecrprint runs instead of one.
 
 Both Duna executables also read two extra keys from `FISKAL.INI` that are not
 exposed through the API: `BEZFISKALNA` (non-fiscal test receipts — useful for
 testing without consuming fiscal memory) and `LOGPRINTER` (dumps serial traffic
 to `Log\Printer\`).
+
+### Not yet verified on a till
+
+Built from the vendor documentation and samples in `docs/`, and tested against
+fakes only:
+
+- **`q=storno`, on every driver.** No storno has been printed on a till. Before
+  relying on it, print one per model — paid in cash, then by card — and check
+  the paper, the day's Z report and, on `fp700`/`sy250`,
+  `bin/accent/ecrprint.log`. Most in doubt are the explicit payment lines
+  inside an `fp700` or `severec` storno: the vendor samples only ever pay a
+  storno in cash, with a bare `5\t`, so try a card storno on those two first.
+  On the Duna models, `BEZFISKALNA` (see [Diagnostics](#diagnostics)) is the
+  way to try without consuming fiscal memory.
+- **`sy250` receipt number.** The shape of the close answer comes from a live
+  run, but nobody has yet set the slip number against the number printed on
+  the receipt.
+- **`severec` / `razvigorec` receipt number and serial.** The line format comes
+  from the vendor's sample `Result.out` files, not from a live run.
+- **Receipt numbers on a storno**, on `sy250`, `severec` and `razvigorec` —
+  see [Receipt number](#receipt-number).
+
+### Tests
+
+```
+php tests/run.php          # everything
+php tests/run.php sy250    # only the tests whose name contains "sy250"
+```
+
+Needs PHP 8 on macOS or Linux, nothing else. Each test drives a driver end to
+end against a scratch copy of `bin/` in which the three vendor executables are
+replaced by the fakes in [tests/fakes](tests/fakes) — PHP scripts started
+through their `#!/usr/bin/env php` line, which is why Windows is out — that
+record the command file they were given and leave behind the result files the
+real ones would. The checkout's own `bin/` is never touched. The suite pins
+the exact bytes `q=fiscal` sends on every driver, so a change to a sale receipt
+cannot go unnoticed, and holds every `q=storno` batch to the vendor's storno
+samples.
