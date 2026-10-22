@@ -21,19 +21,28 @@ class FP700Driver extends EcrPrintDriver
         $this->applySerialSettings($port, $speed ?? self::DEFAULT_SPEED);
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
-        $commands = [
-            $this->cmd('0', '1,0000,1'),
-            ...array_map(fn(array $item)    => $this->cmd('1', $this->itemData($item)),    $items),
-            ...array_map(fn(array $payment) => $this->cmd('5', $this->paymentData($payment)), $payments),
-            $this->cmd('8'),
-        ];
+        return $this->receipt('0', '8', $items, $payments);
+    }
 
-        // Every command is CRLF-terminated and the batch ends with a blank line,
-        // matching the vendor reference files in docs/accent/fp700 byte for byte
-        // (e.g. "…%8\r\n\r\n"). Single-command operations carry no terminator.
-        $this->execute(implode(self::CRLF, $commands) . self::CRLF . self::CRLF);
+    /**
+     * Storno (refund) receipt.
+     *
+     * Each storno sample in docs/accent/fp700/StorniSmetki is its twin in
+     * FiskalniSmetki with exactly two bytes changed: the open command 48 ('0')
+     * becomes 85 ('U') and the close command 56 ('8') becomes 86 ('V'). The
+     * operator and till parameters, the item and payment lines and the
+     * closing blank line stay as they are, so this is fiscal() with that
+     * change and no other.
+     *
+     * The samples pay with a bare "5\t", which settles the whole total in
+     * cash. The payment lines here state each payment's mode and amount, as
+     * fiscal()'s do, so that a card refund is recorded as card.
+     */
+    public function storno(array $items, array $payments): ReceiptResult
+    {
+        return $this->receipt('U', 'V', $items, $payments);
     }
 
     public function closeDayReport(): void
@@ -61,6 +70,35 @@ class FP700Driver extends EcrPrintDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Prints one receipt: open, items, payments, close.
+     *
+     * @param string $open  Command that opens it: '0' sale, 'U' storno.
+     * @param string $close Command that closes it: '8' sale, 'V' storno.
+     */
+    private function receipt(string $open, string $close, array $items, array $payments): ReceiptResult
+    {
+        $commands = [
+            $this->cmd($open, '1,0000,1'),
+            ...array_map(fn(array $item)    => $this->cmd('1', $this->itemData($item)),    $items),
+            ...array_map(fn(array $payment) => $this->cmd('5', $this->paymentData($payment)), $payments),
+            $this->cmd($close),
+        ];
+
+        // Every command is CRLF-terminated and the batch ends with a blank line,
+        // matching the vendor reference files in docs/accent/fp700 byte for byte
+        // (e.g. "…%8\r\n\r\n"). Single-command operations carry no terminator.
+        $this->execute(implode(self::CRLF, $commands) . self::CRLF . self::CRLF);
+
+        // What the FP700 answers is documented nowhere in docs/accent. The
+        // command reference there is the SY series' — tab-separated fields,
+        // P/F verdicts — not the comma-separated dialect this model speaks,
+        // and the FP700 samples are input only. A number read out of an answer
+        // nobody has described would be a guess, so none is reported;
+        // ecrprint.log records what the printer did send back.
+        return ReceiptResult::unknown();
+    }
 
     private function itemData(array $item): string
     {

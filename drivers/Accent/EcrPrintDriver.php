@@ -47,6 +47,16 @@ abstract class EcrPrintDriver implements PrinterDriver
     protected string $effectivePort  = '?';
     protected string $effectiveSpeed = '?';
 
+    /**
+     * What the printer returned for each command of the last batch that went
+     * through, index-aligned with its lines — kept for the drivers that read
+     * data back out of an answer, such as the number of the receipt just
+     * printed. A batch that failed leaves nothing here: execute() threw.
+     *
+     * @var string[]
+     */
+    private array $replies = [];
+
     protected function initPaths(string $basePath): void
     {
         $accentDir        = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'accent';
@@ -132,6 +142,8 @@ abstract class EcrPrintDriver implements PrinterDriver
      */
     protected function execute(string $content): void
     {
+        $this->replies = [];
+
         // The exe always exits 0, so nothing about a failed print is visible
         // from the outside: it prints the message of any exception it swallowed
         // to stdout, and leaves what the printer said about each command in
@@ -162,6 +174,22 @@ abstract class EcrPrintDriver implements PrinterDriver
         if ($rejected !== null) {
             throw new \RuntimeException($rejected);
         }
+
+        $this->replies = $replies;
+    }
+
+    /**
+     * The fields of what the printer returned for command $index (0-based) of
+     * the last batch that went through — its verdict first, then any data —
+     * or an empty array when it returned nothing for that command.
+     *
+     * @return string[]
+     */
+    protected function replyFields(int $index): array
+    {
+        $reply = $this->replies[$index] ?? '';
+
+        return $reply === '' ? [] : explode("\t", $reply);
     }
 
     /**
