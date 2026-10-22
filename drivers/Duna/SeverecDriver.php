@@ -22,6 +22,8 @@
  */
 class SeverecDriver extends EcrPrintDriver
 {
+    use ItemDiscount;
+
     use DunaResult;
 
     private const CRLF = "\r\n";
@@ -146,7 +148,8 @@ class SeverecDriver extends EcrPrintDriver
         $name  = $this->itemName($item['name']);
         $vat   = $this->vatCode($item['vat'] ?? 'A');
         $mkd   = ($item['mkd'] ?? false) ? '@' : '';
-        $price = number_format((float) $item['price'],           2, '.', '');
+        // No documented discount field, so the discount goes into the price.
+        $price = number_format($this->discountedPrice($item),    2, '.', '');
         $qty   = number_format((float) ($item['quantity'] ?? 1), 3, '.', '');
 
         // Format: {name}\t{mkd}{vat}{price}*{qty}

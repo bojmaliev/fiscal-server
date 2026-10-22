@@ -22,6 +22,8 @@
  */
 class RazvigorecDriver implements PrinterDriver
 {
+    use ItemDiscount;
+
     use ProcessRunner;
     use DunaResult;
 
@@ -119,7 +121,8 @@ class RazvigorecDriver implements PrinterDriver
     {
         $name  = $this->itemName($item['name']);
         $vat   = $this->vatCode($item['vat'] ?? 'A');
-        $price = number_format((float) $item['price'],           2, '.', '');
+        // No documented discount field, so the discount goes into the price.
+        $price = number_format($this->discountedPrice($item),    2, '.', '');
         $qty   = number_format((float) ($item['quantity'] ?? 1), 3, '.', '');
 
         return "@{$name};{$vat};{$price};{$qty}";

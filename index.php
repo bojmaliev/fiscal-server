@@ -18,6 +18,7 @@ define('NL', chr(10));
 
 require_once __DIR__ . '/drivers/PrinterDriver.php';
 require_once __DIR__ . '/drivers/ProcessRunner.php';
+require_once __DIR__ . '/drivers/ItemDiscount.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
 require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
 require_once __DIR__ . '/drivers/Accent/SY250Driver.php';
@@ -105,6 +106,10 @@ function handleFiscal(PrinterDriver $driver): void
         throw new \InvalidArgumentException('items and payments are required');
     }
 
+    foreach ($items as $item) {
+        validateDiscount($item['discount'] ?? null);
+    }
+
     $driver->fiscal($items, $payments);
 }
 
@@ -151,6 +156,23 @@ function requestSetting(string $key): ?string
     }
 
     return (string) $value;
+}
+
+/**
+ * A percentage discount is optional on every item. The printers take
+ * 0.00–99.00; a 100% discount is a free order and has no fiscal receipt.
+ *
+ * @throws \InvalidArgumentException on anything else.
+ */
+function validateDiscount(mixed $discount): void
+{
+    if ($discount === null) {
+        return;
+    }
+
+    if ((!is_int($discount) && !is_float($discount)) || $discount < 0 || $discount > 99) {
+        throw new \InvalidArgumentException('Invalid discount. Expected a percentage from 0 to 99.');
+    }
 }
 
 /**

@@ -19,6 +19,8 @@
  */
 class SY250Driver extends EcrPrintDriver
 {
+    use ItemDiscount;
+
     private const CRLF = "\r\n";
 
     // The SY series runs at 115200 where the FP700 runs at 9600, and both are
@@ -94,8 +96,10 @@ class SY250Driver extends EcrPrintDriver
             number_format((float) $item['price'],           2, '.', ''),
             number_format((float) ($item['quantity'] ?? 1), 3, '.', ''),
             ($item['mkd'] ?? false) ? '1' : '0',
-            '',  // DiscountType  — no discount
-            ''   // DiscountValue — no discount
+            // DiscountType '2' is a discount by percentage. Both fields must
+            // be empty when there is none.
+            $this->hasDiscount($item) ? '2' : '',
+            $this->hasDiscount($item) ? $this->formatDiscount($item) : ''
         );
     }
 
