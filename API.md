@@ -92,6 +92,7 @@ Both arrays are required and must be non-empty (`400` otherwise).
 | `price` | number | yes | Unit price, 2 decimals |
 | `quantity` | number | no (`1`) | 3 decimals |
 | `mkd` | boolean | no (`false`) | Marks a Macedonian-origin product. Ignored by `razvigorec` |
+| `discount` | number | no | Percentage off this line, `0`–`99`. Anything else → **400** |
 
 **Payment**
 
@@ -99,6 +100,12 @@ Both arrays are required and must be non-empty (`400` otherwise).
 |---|---|---|---|
 | `amount` | number | yes | 2 decimals |
 | `cash` | boolean | no (`true`) | `true` = cash, `false` = card |
+
+`discount` is printed by the Accent printers as their own discount line under
+the item, and they work it out on the line total: `price × quantity`, less the
+discount rounded to 2 decimals. Payments must add up to that. The Duna printers
+have no documented discount field, so for them the discount is taken off the
+unit price (rounded to 2 decimals) and the receipt shows the reduced price.
 
 Multiple payment entries are supported (e.g. part card, part cash). `razvigorec`
 sums them into a single cash/card/mixed line and **rounds to whole denari**.
@@ -222,6 +229,7 @@ out". Treat `500` as authoritative and `200` as optimistic.
 | `q=deposit-withdraw-money` | ✅ | ✅ | ✅ | ❌ `500` |
 | `q=period-short-report` | ✅ | ✅ | ✅ | ⚠️ date format unconfirmed |
 | `mkd` item flag | ✅ | ✅ | ✅ | ignored |
+| `discount` | ✅ on the line | ✅ on the line | in the price | in the price |
 | `port` | ✅ | ✅ | ✅ | ✅ |
 | `speed` | ✅ baud (default 9600) | ✅ baud (default 115200) | ✅ vendor code | ❌ `400` |
 

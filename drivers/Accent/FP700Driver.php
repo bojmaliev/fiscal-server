@@ -2,6 +2,8 @@
 
 class FP700Driver extends EcrPrintDriver
 {
+    use ItemDiscount;
+
     private const CRLF = "\r\n";
     private const TAB  = "\t";
 
@@ -68,7 +70,11 @@ class FP700Driver extends EcrPrintDriver
         $quantity = number_format((float)($item['quantity'] ?? 1), 3, '.', '');
         $mkd      = ($item['mkd'] ?? false) ? self::MKD_ITEM : '';
 
-        return $name . self::TAB . $mkd . $vat . $price . '*' . $quantity;
+        // ",-20.00" after the quantity is a 20% discount on the line; a
+        // positive value would be a surcharge (Datecs protocol, command 49).
+        $discount = $this->hasDiscount($item) ? ',-' . $this->formatDiscount($item) : '';
+
+        return $name . self::TAB . $mkd . $vat . $price . '*' . $quantity . $discount;
     }
 
     private function paymentData(array $payment): string
