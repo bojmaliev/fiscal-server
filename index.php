@@ -19,6 +19,7 @@ define('NL', chr(10));
 require_once __DIR__ . '/drivers/PrinterDriver.php';
 require_once __DIR__ . '/drivers/ReceiptResult.php';
 require_once __DIR__ . '/drivers/ProcessRunner.php';
+require_once __DIR__ . '/drivers/ItemDiscount.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
 require_once __DIR__ . '/drivers/Accent/FP700Driver.php';
 require_once __DIR__ . '/drivers/Accent/SY250Driver.php';
@@ -199,7 +200,8 @@ function jsonInput(): array
  *
  * @return array{0: array, 1: array} [items, payments]
  *
- * @throws \InvalidArgumentException when either is missing or empty.
+ * @throws \InvalidArgumentException when either is missing or empty, or an
+ *         item's discount is not a percentage the printers take.
  */
 function receiptInput(): array
 {
@@ -209,6 +211,10 @@ function receiptInput(): array
 
     if (empty($items) || empty($payments)) {
         throw new \InvalidArgumentException('items and payments are required');
+    }
+
+    foreach ($items as $item) {
+        validateDiscount($item['discount'] ?? null);
     }
 
     return [$items, $payments];
@@ -228,6 +234,23 @@ function requestSetting(string $key): ?string
     }
 
     return (string) $value;
+}
+
+/**
+ * A percentage discount is optional on every item. The printers take
+ * 0.00–99.00; a 100% discount is a free order and has no fiscal receipt.
+ *
+ * @throws \InvalidArgumentException on anything else.
+ */
+function validateDiscount(mixed $discount): void
+{
+    if ($discount === null) {
+        return;
+    }
+
+    if ((!is_int($discount) && !is_float($discount)) || $discount < 0 || $discount > 99) {
+        throw new \InvalidArgumentException('Invalid discount. Expected a percentage from 0 to 99.');
+    }
 }
 
 /**

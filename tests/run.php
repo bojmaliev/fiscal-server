@@ -29,6 +29,7 @@ foreach ([
     'PrinterDriver',
     'ReceiptResult',
     'ProcessRunner',
+    'ItemDiscount',
     'Accent/EcrPrintDriver',
     'Accent/FP700Driver',
     'Accent/SY250Driver',
@@ -914,6 +915,25 @@ test('http: storno takes the fiscal body, validates it the same way and answers 
     same([400, '{"error":"Invalid VAT code: Q"}'], [$response['status'], $response['body']], 'a bad VAT code');
 
     same(1, count(runs($base, 'razvigorec')) + count(runs($base, 'sy250')), 'executable runs');
+});
+
+test('http: fiscal and storno refuse a discount the printers do not take', function () {
+    $base = till();
+    $port = serve($base);
+
+    foreach (['fiscal', 'storno'] as $route) {
+        foreach (['negative' => -5, 'the whole price' => 100, 'text' => '10'] as $case => $discount) {
+            $items    = [[...ITEMS[0], 'discount' => $discount]];
+            $response = request($port, "/index.php?q={$route}&driver=fp700", ['items' => $items, 'payments' => PAYMENTS]);
+            same(
+                [400, '{"error":"Invalid discount. Expected a percentage from 0 to 99."}'],
+                [$response['status'], $response['body']],
+                "{$route}: {$case}"
+            );
+        }
+    }
+
+    same(0, count(runs($base, 'fp700')), 'executable runs');
 });
 
 // ---------------------------------------------------------------------------
