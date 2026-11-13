@@ -851,6 +851,24 @@ test('razvigorec: storno sends what Storna.txt sends', function () {
     same(razvigorecStorno(sent($sale, 'razvigorec')), sent($storno, 'razvigorec'), 'the driver: a sale opened with #S');
 });
 
+test('severec, razvigorec: a discounted price rounds half up on its decimal value', function () {
+    // 2817.95 less 10% is 2536.155; 0.35 less 10% is 0.315. The float of each
+    // lands just under the half cent, which PHP 8.4's round() rounded down.
+    $items = [
+        ['name' => 'X', 'vat' => 'A', 'price' => 2817.95, 'quantity' => 1, 'discount' => 10],
+        ['name' => 'Y', 'vat' => 'A', 'price' => 0.35, 'quantity' => 1, 'discount' => 10],
+    ];
+    $payments = [['amount' => 2536.48, 'cash' => true]];
+
+    $base = till();
+    driver('severec', $base)->fiscal($items, $payments);
+    same([cp1251("1X\tA2536.16*1.000"), cp1251("1Y\tA0.32*1.000")], array_slice(withoutSequence(sent($base, 'severec')), 1, 2), 'severec');
+
+    $base = till();
+    driver('razvigorec', $base)->fiscal($items, $payments);
+    same("#F\r\n@X;A;2536.16;1.000\r\n@Y;A;0.32;1.000\r\n#G2536\r\n", sent($base, 'razvigorec'), 'razvigorec');
+});
+
 test('storno reports its receipt number the way fiscal does', function () {
     $base = till();
     scenario($base, 'sy250', ['replies' => SY250_REPLIES]);
