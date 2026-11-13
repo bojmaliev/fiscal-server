@@ -42,18 +42,28 @@ class RazvigorecDriver implements PrinterDriver
     }
 
     /**
-     * Points Razvigorec.ini at a COM port chosen by the caller.
+     * Razvigorec.exe exposes no baud-rate setting, so a speed is rejected
+     * rather than silently dropped.
      *
-     * Razvigorec.ini is not a keyed INI: the port is simply the first line
-     * ("COM1" as shipped). Any further lines are preserved. Razvigorec.exe
-     * exposes no baud-rate setting, so a speed is rejected rather than
-     * silently dropped.
+     * Static so that a request can be checked without constructing the
+     * driver, which rewrites Razvigorec.ini — q=ping validates this way.
      */
-    private function applySerialSettings(?string $port, ?string $speed): void
+    public static function rejectSpeed(?string $speed): void
     {
         if ($speed !== null) {
             throw new \InvalidArgumentException('The Razvigorec driver has no speed setting; omit "speed".');
         }
+    }
+
+    /**
+     * Points Razvigorec.ini at a COM port chosen by the caller.
+     *
+     * Razvigorec.ini is not a keyed INI: the port is simply the first line
+     * ("COM1" as shipped). Any further lines are preserved.
+     */
+    private function applySerialSettings(?string $port, ?string $speed): void
+    {
+        self::rejectSpeed($speed);
 
         if ($port === null) {
             return;
@@ -78,17 +88,20 @@ class RazvigorecDriver implements PrinterDriver
         }
     }
 
-    public function fiscal(array $items, array $payments): void
+    public function fiscal(array $items, array $payments): ReceiptResult
     {
-        $lines = ['#F'];
+        return $this->receipt('#F', $items, $payments);
+    }
 
-        foreach ($items as $item) {
-            $lines[] = $this->itemLine($item);
-        }
-
-        $lines[] = $this->paymentLine($payments);
-
-        $this->execute(implode("\r\n", $lines) . "\r\n");
+    /**
+     * Storno (refund) receipt: "#S - Storno smetka" in
+     * docs/razvigorec/Komandi.txt, and "Primeri na smetki/Storna.txt" is #S
+     * followed by item and payment lines in the format a sale uses. So this is
+     * fiscal() opened with #S instead of #F.
+     */
+    public function storno(array $items, array $payments): ReceiptResult
+    {
+        return $this->receipt('#S', $items, $payments);
     }
 
     public function closeDayReport(): void
@@ -116,6 +129,26 @@ class RazvigorecDriver implements PrinterDriver
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Prints one receipt: the open line, one line per item, one payment line.
+     *
+     * @param string $open '#F' for a sale, '#S' for a storno.
+     */
+    private function receipt(string $open, array $items, array $payments): ReceiptResult
+    {
+        $lines = [$open];
+
+        foreach ($items as $item) {
+            $lines[] = $this->itemLine($item);
+        }
+
+        $lines[] = $this->paymentLine($payments);
+
+        $this->execute(implode("\r\n", $lines) . "\r\n");
+
+        return $this->receiptFromResult();
+    }
 
     private function itemLine(array $item): string
     {

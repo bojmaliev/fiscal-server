@@ -17,6 +17,7 @@ define('TAB', chr(9));
 define('NL', chr(10));
 
 require_once __DIR__ . '/drivers/PrinterDriver.php';
+require_once __DIR__ . '/drivers/ReceiptResult.php';
 require_once __DIR__ . '/drivers/ProcessRunner.php';
 require_once __DIR__ . '/drivers/ItemDiscount.php';
 require_once __DIR__ . '/drivers/Accent/EcrPrintDriver.php';
@@ -29,6 +30,9 @@ require_once __DIR__ . '/drivers/Duna/RazvigorecDriver.php';
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
+
+// Reported by q=ping, so a caller can tell which build it is talking to.
+const VERSION = '1.1.0';
 
 // Fallbacks used when a request does not say otherwise. PRINTER_PORT = null
 // means "leave the vendor config files exactly as they are", so an installation
@@ -61,6 +65,32 @@ const PRINTER_BASE_PATH = __DIR__;
  */
 function createDriver(): PrinterDriver
 {
+    [$driver, $port, $speed] = driverSettings();
+
+    $instance = match ($driver) {
+        'fp700'      => new FP700Driver(PRINTER_BASE_PATH, $port, $speed),
+        'sy250'      => new SY250Driver(PRINTER_BASE_PATH, $port, $speed),
+        'severec'    => new SeverecDriver(PRINTER_BASE_PATH, $port, $speed),
+        'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH, $port, $speed),
+        default      => throw new \InvalidArgumentException('Unknown printer driver: ' . $driver),
+    };
+
+    announceDriver($driver);
+
+    return $instance;
+}
+
+/**
+ * Resolves this request's driver, port and speed and refuses anything the
+ * driver would refuse — without constructing it, since the constructors
+ * rewrite the vendor config file and q=ping must not.
+ *
+ * @return array{0: string, 1: ?string, 2: ?string} [driver, port, speed]
+ *
+ * @throws \InvalidArgumentException on a value the driver cannot use.
+ */
+function driverSettings(): array
+{
     $driver = strtolower(requestSetting('driver') ?? PRINTER_DRIVER);
     $port   = requestSetting('port')  ?? PRINTER_PORT;
     $speed  = requestSetting('speed') ?? PRINTER_SPEED;
@@ -74,43 +104,66 @@ function createDriver(): PrinterDriver
         throw new \InvalidArgumentException('Invalid speed. Expected digits only.');
     }
 
-    $port = $port === null ? null : strtoupper($port);
+    if (!in_array($driver, ['fp700', 'sy250', 'severec', 'razvigorec'], true)) {
+        throw new \InvalidArgumentException('Unknown printer driver: ' . $driver);
+    }
 
-    $instance = match ($driver) {
-        'fp700'      => new FP700Driver(PRINTER_BASE_PATH, $port, $speed),
-        'sy250'      => new SY250Driver(PRINTER_BASE_PATH, $port, $speed),
-        'severec'    => new SeverecDriver(PRINTER_BASE_PATH, $port, $speed),
-        'razvigorec' => new RazvigorecDriver(PRINTER_BASE_PATH, $port, $speed),
-        default      => throw new \InvalidArgumentException('Unknown printer driver: ' . $driver),
-    };
+    if ($driver === 'razvigorec') {
+        RazvigorecDriver::rejectSpeed($speed);
+    }
 
-    // Echoed back because sending the wrong dialect to a till does not look
-    // like a configuration mistake from the outside: the short report
-    // commands survive it and only the receipt fails to come out.
+    return [$driver, $port === null ? null : strtoupper($port), $speed];
+}
+
+/**
+ * Echoes the resolved driver back, because sending the wrong dialect to a
+ * till does not look like a configuration mistake from the outside: the short
+ * report commands survive it and only the receipt fails to come out.
+ */
+function announceDriver(string $driver): void
+{
     header('X-Fiscal-Driver: ' . $driver);
-
-    return $instance;
 }
 
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
 
-function handleFiscal(PrinterDriver $driver): void
+/**
+ * Health check. Proves the caller reached fiscal-server rather than some
+ * other program on the port, and that the printer settings it sends would be
+ * accepted: they are validated exactly as the printing routes validate them.
+ *
+ * Constructs no driver — that rewrites the vendor config file — and runs no
+ * vendor executable, so it leaves the till exactly as it found it.
+ */
+function handlePing(): array
 {
-    $input    = jsonInput();
-    $items    = $input['items']    ?? [];
-    $payments = $input['payments'] ?? [];
+    [$driver] = driverSettings();
 
-    if (empty($items) || empty($payments)) {
-        throw new \InvalidArgumentException('items and payments are required');
-    }
+    announceDriver($driver);
 
-    foreach ($items as $item) {
-        validateDiscount($item['discount'] ?? null);
-    }
+    return [
+        'ok'      => true,
+        'service' => 'fiscal-server',
+        'version' => VERSION,
+        'driver'  => $driver,
+    ];
+}
 
-    $driver->fiscal($items, $payments);
+function handleFiscal(PrinterDriver $driver): ReceiptResult
+{
+    [$items, $payments] = receiptInput();
+
+    return $driver->fiscal($items, $payments);
+}
+
+/** A storno (refund) receipt takes the q=fiscal body, validated the same way. */
+function handleStorno(PrinterDriver $driver): ReceiptResult
+{
+    [$items, $payments] = receiptInput();
+
+    return $driver->storno($items, $payments);
 }
 
 function handleDepositWithdrawMoney(PrinterDriver $driver): void
@@ -140,6 +193,31 @@ function jsonInput(): array
     }
 
     return $input;
+}
+
+/**
+ * The items and payments of a q=fiscal or q=storno body.
+ *
+ * @return array{0: array, 1: array} [items, payments]
+ *
+ * @throws \InvalidArgumentException when either is missing or empty, or an
+ *         item's discount is not a percentage the printers take.
+ */
+function receiptInput(): array
+{
+    $input    = jsonInput();
+    $items    = $input['items']    ?? [];
+    $payments = $input['payments'] ?? [];
+
+    if (empty($items) || empty($payments)) {
+        throw new \InvalidArgumentException('items and payments are required');
+    }
+
+    foreach ($items as $item) {
+        validateDiscount($item['discount'] ?? null);
+    }
+
+    return [$items, $payments];
 }
 
 /**
@@ -206,18 +284,33 @@ try {
         throw new \InvalidArgumentException('Missing route parameter');
     }
 
-    $driver = createDriver();
+    // Answered before any driver exists: constructing one rewrites the vendor
+    // config file, and a health check has to leave the till as it found it.
+    if ($_GET['q'] === 'ping') {
+        respondJson(200, handlePing());
+        exit();
+    }
+
+    $driver  = createDriver();
+    $receipt = null;
 
     match ($_GET['q']) {
         'close-day-report'       => $driver->closeDayReport(),
         'control-report'         => $driver->controlReport(),
         'deposit-withdraw-money' => handleDepositWithdrawMoney($driver),
         'period-short-report'    => handlePeriodShortReport($driver),
-        'fiscal'                 => handleFiscal($driver),
+        'fiscal'                 => $receipt = handleFiscal($driver),
+        'storno'                 => $receipt = handleStorno($driver),
         default                  => throw new \InvalidArgumentException("Unknown route: {$_GET['q']}"),
     };
 
-    http_response_code(200);
+    // A receipt answers with what the vendor tooling reported about it. The
+    // reports keep their empty 200, which is all their callers look at.
+    if ($receipt === null) {
+        http_response_code(200);
+    } else {
+        respondJson(200, $receipt->toArray());
+    }
 
 } catch (\InvalidArgumentException $e) {
     respondError(400, $e->getMessage());
@@ -233,7 +326,12 @@ try {
  */
 function respondError(int $status, string $message): void
 {
+    respondJson($status, ['error' => $message]);
+}
+
+function respondJson(int $status, array $body): void
+{
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['error' => $message], JSON_UNESCAPED_UNICODE);
+    echo json_encode($body, JSON_UNESCAPED_UNICODE);
 }

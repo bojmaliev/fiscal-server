@@ -22,12 +22,21 @@ trait ItemDiscount
         return $this->discountPercent($item) > 0;
     }
 
-    /** The unit price with the discount already taken off, to 2 decimals. */
+    /**
+     * The unit price with the discount already taken off, to 2 decimals,
+     * rounded half up on its decimal value.
+     *
+     * The subtraction can land a hair under an exact half cent, and since PHP
+     * 8.4 round() rounds the float as it is. 2817.95 less 10% is 2536.155,
+     * which came out as 2536.15, a cent less than the till charged. Rounding
+     * to 6 places first gives round() the decimal value again. That is what
+     * PHP 8.3 and earlier did, and what pos_app's Dart engine does.
+     */
     protected function discountedPrice(array $item): float
     {
         $price = (float) $item['price'];
 
-        return round($price - $price * $this->discountPercent($item) / 100, 2);
+        return round(round($price - $price * $this->discountPercent($item) / 100, 6), 2);
     }
 
     /** The percentage as the printers expect it: 2 decimals, no sign. */
